@@ -1,0 +1,77 @@
+paths:
+  raw_data: data/raw/enquete_all_prepared.xlsx  # Tous les répondants (90)
+  margins: data/margins/margins_center.csv
+  output_figures: outputs/figures
+  output_reports: outputs/reports
+
+# Paramètres de l'enquête
+survey:
+  sheet_name: "Sheet1"
+  weighting_vars:
+    - "age_group"
+    - "sexe"
+    - "csp"
+  id_column: "id_repondant"
+
+# Paramètres du raking
+raking:
+  max_iterations: 500      # Plus d'itérations
+  tolerance: 0.01          # Critère moins strict
+  initial_weight: 1.0
+  min_weight: 0.01         # Limite basse plus souple
+  max_weight: 1000.0       # Limite haute beaucoup plus élevée (50 répondants pour 25k personnes = ratio ~500)
+
+# Paramètres des marges
+margins:
+  geo_level: "IRIS"
+  geo_id_column: "code_iris"
+
+# Paramètres d'analyse
+analysis:
+  # Variables générales (tous les répondants)
+  variables_general:
+    - "deja_utilise_services"
+    - "partage_oui"
+    - "prix_max_location"
+  
+  # Variables locales (Besançon uniquement)
+  variables_local:
+    - "interet_projet"
+    - "accepte_cotisation"
+  
+  comparison_groups:
+    - "age_group"
+    - "sexe"
+  
+  # Filtre pour analyses locales
+  local_filter:
+    variable: "is_besancon"
+    value: true
+  
+  # Sous-groupes pour rapports spécifiques (enquête BOB)
+  # TOUS basés sur Besançon uniquement
+  subgroups:
+    - name: "non_interesses"
+      filter_variable: "interet_projet"
+      filter_value: "Non"
+      description: "Répondants non intéressés par le projet (Besançon)"
+      local_only: true
+    
+    - name: "non_cotisation"
+      filter_variable: "accepte_cotisation"
+      filter_value: "Non, je ne souhaiterai pas payer de cotisation"
+      description: "Répondants refusant la cotisation (Besançon)"
+      local_only: true
+    
+    - name: "oui_cotisation"
+      filter_variable: "accepte_cotisation"
+      filter_value: "Oui, je serai prêt(e) à payer une cotisation"
+      description: "Répondants acceptant la cotisation (Besançon)"
+      local_only: true
+
+# Paramètres du rapport
+report:
+  title: "Enquête BOB - Bibliothèque d'Objets Besançon"
+  author: "Votre nom"
+  include_figures: true
+  output_format: "pdf"

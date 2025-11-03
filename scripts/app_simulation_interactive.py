@@ -1,0 +1,1739 @@
+"""
+Application web interactive pour simuler le budget avec des curseurs.
+
+Utilise Streamlit pour créer une interface graphique interactive.
+
+Installation :
+    pip install streamlit plotly
+
+Lancement :
+    streamlit run scripts/app_simulation_interactive.py
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+import sys
+import yaml
+import re
+from datetime import datetime
+import io
+import base64
+
+# Ajouter le chemin
+BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR / "src"))
+
+# Imports
+from scripts.budget_simulator_interactive import (
+    load_data,
+    analyze_profile_behaviors,
+    distribute_adherents_by_profile,
+    calculate_revenues_by_profile
+)
+from raking import RakingWeighter
+
+# Imports pour PDF
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        PageBreak, Image, KeepTogether
+    )
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    st.warning("⚠️ ReportLab n'est pas installé. L'export PDF n'est pas disponible. Installez avec: pip install reportlab")
+
+# Fonction pour obtenir des couleurs distinctes pour les graphiques en camembert
+def get_distinct_colors(labels, color_scheme='default'):
+    """
+    Génère une liste de couleurs distinctes pour les graphiques en camembert.
+    
+    Args:
+        labels: Liste des labels à colorer
+        color_scheme: 'default', 'positive_negative', ou 'sequential'
+    
+    Returns:
+        Liste de couleurs hexadécimales
+    """
+    # Palette de couleurs distinctes (10 couleurs)
+    palette_default = [
+        '#1f4788',  # Bleu foncé
+        '#2ecc71',  # Vert
+        '#e74c3c',  # Rouge
+        '#f39c12',  # Orange
+        '#9b59b6',  # Violet
+        '#3498db',  # Bleu clair
+        '#e67e22',  # Orange foncé
+        '#16a085',  # Vert turquoise
+        '#c0392b',  # Rouge foncé
+        '#34495e'   # Gris bleu
+    ]
+    
+    # Palette pour positive/negative (vert = positif, rouge = négatif, orange = neutre)
+    # Ordre de priorité : chercher d'abord les correspondances spécifiques
+    palette_positive_negative = {
+        # Catégories négatives (rouge)
+        'non, je ne souhaiterai pas': '#e74c3c',  # Rouge
+        'non, je ne souhaiterais pas': '#e74c3c',  # Rouge
+        'non': '#c0392b',  # Rouge foncé
+        
+        # Catégories positives avec montants (nuances de vert)
+        'oui, entre 20€ et 30€': '#16a085',  # Vert turquoise
+        'oui, entre 10€ et 20€': '#27ae60',  # Vert moyen
+        'oui, entre 1€ et 10€': '#2ecc71',  # Vert clair
+        'oui, entre': '#2ecc71',  # Vert par défaut pour les montants
+        
+        # Catégories neutres/intermédiaires
+        'peut-être': '#f39c12',  # Orange
+        'peut être': '#f39c12',  # Orange (variante)
+        
+        # Catégories positives simples
+        'oui': '#2ecc71',  # Vert
+    }
+    
+    colors = []
+    
+    if color_scheme == 'positive_negative':
+        # Utiliser la palette positive/negative avec fallback
+        # Trier les clés par longueur décroissante pour prioriser les correspondances les plus spécifiques
+        sorted_keys = sorted(palette_positive_negative.keys(), key=len, reverse=True)
+        
+        # Garder une trace des couleurs déjà utilisées pour éviter les doublons
+        used_colors = []
+        
+        for i, label in enumerate(labels):
+            label_str = str(label).lower()
+            color_found = None
+            
+            # Chercher les correspondances par ordre de spécificité (du plus spécifique au plus général)
+            for key in sorted_keys:
+                if key in label_str:
+                    color_candidate = palette_positive_negative[key]
+                    # Si cette couleur n'a pas encore été utilisée, l'utiliser
+                    if color_candidate not in used_colors:
+                        color_found = color_candidate
+                        used_colors.append(color_found)
+                        break
+            
+            # Si aucune couleur spécifique trouvée ou déjà utilisée, utiliser palette par défaut
+            if not color_found:
+                # Chercher une couleur disponible dans la palette par défaut
+                for default_color in palette_default:
+                    if default_color not in used_colors:
+                        color_found = default_color
+                        used_colors.append(color_found)
+                        break
+                
+                # Si toutes les couleurs sont utilisées, réutiliser avec rotation
+                if not color_found:
+                    color_found = palette_default[i % len(palette_default)]
+            
+            colors.append(color_found)
+    else:
+        # Utiliser la palette par défaut avec rotation
+        for i in range(len(labels)):
+            colors.append(palette_default[i % len(palette_default)])
+    
+    return colors
+
+
+# Fonction pour exporter les graphiques Plotly en images
+def export_plotly_figure(fig, output_path):
+    """Exporte un graphique Plotly en PNG."""
+    try:
+        # Essayer avec write_image (nécessite kaleido)
+        fig.write_image(str(output_path), width=800, height=600, scale=2)
+        return True
+    except Exception as e:
+        # Si kaleido n'est pas disponible, essayer une autre méthode
+        try:
+            import plotly.io as pio
+            if hasattr(pio, 'kaleido'):
+                pio.kaleido.scope.default_format = "png"
+                fig.write_image(str(output_path), width=800, height=600, scale=2)
+                return True
+        except:
+            pass
+        
+        # Si tout échoue, utiliser to_html puis convertir (moins optimal)
+        try:
+            html_path = str(output_path).replace('.png', '.html')
+            fig.write_html(html_path)
+            st.warning(f"⚠️ Graphique exporté en HTML : {html_path}. Installez kaleido pour exporter en PNG : `pip install kaleido`")
+            return False
+        except Exception as e2:
+            st.warning(f"⚠️ Impossible d'exporter le graphique : {e}. Installez kaleido : `pip install kaleido`")
+            return False
+
+
+def generate_scenario_pdf(scenario_data, output_path):
+    """
+    Génère un PDF de rapport pour un scénario.
+    
+    Args:
+        scenario_data: Dictionnaire contenant toutes les données du scénario
+        output_path: Chemin où sauvegarder le PDF
+    """
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("ReportLab n'est pas installé")
+    
+    doc = SimpleDocTemplate(str(output_path), pagesize=A4)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Style personnalisé pour le titre
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor('#1f4788'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    # Page de garde
+    story.append(Spacer(1, 3*cm))
+    story.append(Paragraph("Rapport de Scénario BOB", title_style))
+    story.append(Spacer(1, 1*cm))
+    story.append(Paragraph(f"<b>Bibliothèque d'Objets Besançon</b>", styles['Normal']))
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph(f"Généré le : {datetime.now().strftime('%d/%m/%Y à %H:%M')}", styles['Normal']))
+    story.append(PageBreak())
+    
+    # 1. Hypothèses du scénario
+    story.append(Paragraph("1. Hypothèses du Scénario", styles['Heading1']))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # Tableau des hypothèses
+    hypotheses_data = [
+        ['Paramètre', 'Valeur'],
+        ['Nombre d\'adhérents cible', format_nombre(scenario_data['nb_adherents'])],
+        ['Tarif Solidaire', f"{scenario_data['cotisation_solidaire']} €"],
+        ['Tarif Normal', f"{scenario_data['cotisation_normale']} €"],
+        ['Tarif Soutien', f"{scenario_data['cotisation_soutien']} €"],
+        ['Prix location moyen', f"{scenario_data['prix_location']} €/jour"],
+        ['Nombre locations/an/adhérent', format_nombre(scenario_data['nb_locations_moyen'])],
+    ]
+    
+    hypotheses_table = Table(hypotheses_data, colWidths=[8*cm, 8*cm])
+    hypotheses_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.append(hypotheses_table)
+    story.append(Spacer(1, 1*cm))
+    
+    # Répartition des tarifs par profil
+    story.append(Paragraph("1.1. Répartition des Tarifs par Profil", styles['Heading2']))
+    story.append(Spacer(1, 0.3*cm))
+    
+    # Tableau des proportions
+    proportions_data = [['Profil', 'Solidaire (%)', 'Normal (%)', 'Soutien (%)']]
+    for nom_profil, props in scenario_data['proportions_par_profil'].items():
+        proportions_data.append([
+            nom_profil,
+            format_nombre(props['solidaire'] * 100, 1),
+            format_nombre(props['normale'] * 100, 1),
+            format_nombre(props['soutien'] * 100, 1)
+        ])
+    
+    proportions_table = Table(proportions_data, colWidths=[6*cm, 3*cm, 3*cm, 3*cm])
+    proportions_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.append(proportions_table)
+    story.append(PageBreak())
+    
+    # 2. KPIs principaux
+    story.append(Paragraph("2. Indicateurs Clés (KPIs)", styles['Heading1']))
+    story.append(Spacer(1, 0.5*cm))
+    
+    kpis_data = [
+        ['Indicateur', 'Valeur'],
+        ['Nombre total d\'adhérents', format_nombre(scenario_data['total_adherents'])],
+        ['Revenus cotisations', f"{format_nombre(scenario_data['total_cotisations'])} €"],
+        ['Revenus locations', f"{format_nombre(scenario_data['total_locations'])} €"],
+        ['Revenus totaux', f"{format_nombre(scenario_data['total_revenus'])} €"],
+        ['Revenu moyen par adhérent', f"{format_nombre(scenario_data['revenu_par_adherent'])} €"],
+        ['Cotisation moyenne', f"{format_nombre(scenario_data['cotisation_moyenne'])} €"],
+        ['Répartition solidaire', f"{format_nombre(scenario_data['pct_solidaire'], 1)}%"],
+        ['Répartition normal', f"{format_nombre(scenario_data['pct_normale'], 1)}%"],
+        ['Répartition soutien', f"{format_nombre(scenario_data['pct_soutien'], 1)}%"],
+    ]
+    
+    kpis_table = Table(kpis_data, colWidths=[8*cm, 8*cm])
+    kpis_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2ecc71')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    story.append(kpis_table)
+    story.append(PageBreak())
+    
+    # 3. Graphiques
+    if 'graphiques_paths' in scenario_data and scenario_data['graphiques_paths']:
+        story.append(Paragraph("3. Visualisations", styles['Heading1']))
+        story.append(Spacer(1, 0.5*cm))
+        
+        for i, (titre, path) in enumerate(scenario_data['graphiques_paths'], 1):
+            if Path(path).exists():
+                story.append(Paragraph(f"3.{i}. {titre}", styles['Heading2']))
+                story.append(Spacer(1, 0.3*cm))
+                img = Image(str(path), width=16*cm, height=12*cm)
+                story.append(img)
+                story.append(Spacer(1, 0.5*cm))
+                if i < len(scenario_data['graphiques_paths']):
+                    story.append(PageBreak())
+    
+    # 4. Tableau détaillé par profil
+    story.append(Paragraph("4. Détails par Profil", styles['Heading1']))
+    story.append(Spacer(1, 0.5*cm))
+    
+    df_detailed = scenario_data['df_result']
+    detailed_data = [['Profil', 'Âge', 'CSP', 'Adhérents', 'Cotis. Moy.', 'Loc/an', 'Rev. Total']]
+    
+    for _, row in df_detailed.iterrows():
+        detailed_data.append([
+            row.get('profil', ''),
+            row.get('age_group', ''),
+            row.get('csp', ''),
+            format_nombre(row.get('nb_adherents', 0)),
+            f"{format_nombre(row.get('cotisation_moyenne', 0), 2)} €",
+            format_nombre(row.get('nb_locations_an', 0)),
+            f"{format_nombre(row.get('revenus_totaux', 0))} €"
+        ])
+    
+    detailed_table = Table(detailed_data, colWidths=[3*cm, 2*cm, 3*cm, 2*cm, 2*cm, 2*cm, 2*cm])
+    detailed_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('FONTSIZE', (0, 1), (-1, -1), 7),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.append(detailed_table)
+    
+    # Générer le PDF
+    doc.build(story)
+    return output_path
+
+
+# Fonction helper pour formater les nombres en français
+def format_nombre(nombre, decimals=0):
+    """
+    Formate un nombre selon le format français : virgule pour décimales, pas de séparateur de milliers.
+    
+    Args:
+        nombre: Nombre à formater
+        decimals: Nombre de décimales (0 pour entier)
+    
+    Returns:
+        str: Nombre formaté
+    """
+    if pd.isna(nombre):
+        return "N/A"
+    
+    if decimals == 0:
+        return f"{int(nombre):d}"
+    else:
+        return f"{nombre:.{decimals}f}".replace('.', ',')
+
+# Configuration de la page
+st.set_page_config(
+    page_title="Simulateur BOB - Budget Interactif",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS personnalisé
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f4788;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .big-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1f4788;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Cache des données
+@st.cache_data
+def load_cached_data():
+    """Charge les données avec cache."""
+    df, margins = load_data()
+    df_behaviors = analyze_profile_behaviors(df)
+    return df, margins, df_behaviors
+
+
+@st.cache_data
+def load_weighted_survey_data():
+    """
+    Charge et redresse les données de l'enquête pour visualisation.
+    
+    Returns:
+        df_weighted: DataFrame avec poids calculés
+        config: Configuration du projet
+    """
+    # Charger la configuration
+    config_path = BASE_DIR / "config.yaml"
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    # Charger les données
+    data_path = BASE_DIR / config['paths']['raw_data']
+    margins_path = BASE_DIR / config['paths']['margins']
+    
+    df = pd.read_excel(data_path)
+    margins_df = pd.read_csv(margins_path)
+    
+    # Filtrer sur Besançon pour le redressement
+    df_besancon = df[df['is_besancon'] == 1].copy()
+    
+    # Mapping CSP : Numérique → Texte
+    csp_mapping = {
+        1: 'Actifs',
+        2: 'Etudiants/Chomeurs',
+        3: 'Retraites',
+        1.0: 'Actifs',
+        2.0: 'Etudiants/Chomeurs',
+        3.0: 'Retraites'
+    }
+    
+    # Convertir CSP en texte pour l'échantillon
+    df_besancon['csp'] = df_besancon['csp'].map(csp_mapping).fillna(df_besancon['csp'])
+    
+    # Convertir CSP en texte pour les marges
+    margins_df['csp'] = margins_df['csp'].map(csp_mapping).fillna(margins_df['csp'])
+    
+    # Préparer les marges au format dictionnaire
+    margins_dict = {}
+    for var in config['survey']['weighting_vars']:
+        if var in margins_df.columns:
+            var_margins = margins_df.groupby(var)['population'].sum()
+            margins_dict[var] = var_margins
+    
+    # Créer le weighter
+    weighter = RakingWeighter(
+        max_iterations=config['raking']['max_iterations'],
+        tolerance=config['raking']['tolerance'],
+        min_weight=config['raking']['min_weight'],
+        max_weight=config['raking']['max_weight']
+    )
+    
+    # Initialiser les poids
+    df_besancon['weight'] = config['raking']['initial_weight']
+    
+    # Appliquer le redressement
+    df_weighted = weighter.rake(df_besancon, margins_dict, weight_col='weight')
+    
+    return df_weighted, config
+
+
+
+
+def attribuer_type_cotisation(age_group, csp):
+    """
+    Attribue un type de cotisation selon le profil.
+    
+    Règles :
+    - Solidaire : Étudiants/Chômeurs, Jeunes (18-24)
+    - Normal : Actifs, 25-54 ans
+    - Soutien : Retraités avec moyens, Actifs 45-54 ans
+    
+    Returns:
+        str: 'solidaire', 'normale', ou 'soutien'
+    """
+    # Tarif solidaire pour étudiants/chômeurs et jeunes
+    if csp == 'Etudiants/Chomeurs':
+        return 'solidaire'
+    if age_group == '18-24':
+        return 'solidaire'
+    
+    # Tarif soutien pour les plus aisés
+    if csp == 'Retraites' and age_group in ['55-64', '65+']:
+        # 30% des retraités prennent le tarif soutien
+        return 'soutien' if np.random.random() < 0.3 else 'normale'
+    
+    if csp == 'Actifs' and age_group in ['45-54', '55-64']:
+        # 40% des actifs seniors prennent le tarif soutien
+        return 'soutien' if np.random.random() < 0.4 else 'normale'
+    
+    # Tarif normal pour tous les autres
+    return 'normale'
+
+
+def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation_normale, cotisation_soutien, proportions_par_profil):
+    """
+    Calcule la répartition des cotisations par type pour chaque profil.
+    
+    Args:
+        df_result: DataFrame avec les profils
+        cotisation_solidaire: Tarif solidaire
+        cotisation_normale: Tarif normal
+        cotisation_soutien: Tarif soutien
+        proportions_par_profil: Dictionnaire avec les proportions par profil
+    
+    Returns:
+        DataFrame avec colonnes nb_solidaire, nb_normale, nb_soutien, cotisation_moyenne
+    """
+    df_result = df_result.copy()
+    
+    def trouver_profil(age_group, csp):
+        """Trouve le profil correspondant dans proportions_par_profil."""
+        # Chercher d'abord les correspondances exactes (âge ET CSP)
+        for nom_profil, config in proportions_par_profil.items():
+            if nom_profil == 'Autres profils':
+                continue
+            age_match = config['age_group'] is None or config['age_group'] == age_group
+            csp_match = config['csp'] is None or config['csp'] == csp
+            
+            # Si les deux correspondent, utiliser ce profil
+            if age_match and csp_match:
+                # Préférer les profils où les deux sont spécifiés
+                if config['age_group'] is not None and config['csp'] is not None:
+                    return config
+        
+        # Ensuite chercher les correspondances partielles (âge OU CSP)
+        for nom_profil, config in proportions_par_profil.items():
+            if nom_profil == 'Autres profils':
+                continue
+            age_match = config['age_group'] is None or config['age_group'] == age_group
+            csp_match = config['csp'] is None or config['csp'] == csp
+            
+            if age_match and csp_match:
+                return config
+        
+        # Si aucun match, utiliser "Autres profils"
+        return proportions_par_profil.get('Autres profils', {
+            'solidaire': 0.1,
+            'normale': 0.8,
+            'soutien': 0.1
+        })
+    
+    for idx, row in df_result.iterrows():
+        age_group = row['age_group']
+        csp = row['csp']
+        nb_adherents = row['nb_adherents']
+        
+        # Trouver les proportions pour ce profil
+        proportions = trouver_profil(age_group, csp)
+        
+        # Calculer la répartition
+        nb_solidaire = int(nb_adherents * proportions['solidaire'])
+        nb_normale = int(nb_adherents * proportions['normale'])
+        nb_soutien = nb_adherents - nb_solidaire - nb_normale  # Pour s'assurer que le total est correct
+        
+        # Calculer la cotisation moyenne pour ce profil
+        cotisation_moyenne = (
+            nb_solidaire * cotisation_solidaire +
+            nb_normale * cotisation_normale +
+            nb_soutien * cotisation_soutien
+        ) / nb_adherents if nb_adherents > 0 else cotisation_normale
+        
+        df_result.at[idx, 'nb_solidaire'] = nb_solidaire
+        df_result.at[idx, 'nb_normale'] = nb_normale
+        df_result.at[idx, 'nb_soutien'] = nb_soutien
+        df_result.at[idx, 'cotisation_moyenne'] = cotisation_moyenne
+    
+    return df_result
+
+# Fonction principale
+def main():
+    # En-tête
+    st.markdown('<h1 class="main-header">📊 Simulateur de Budget Interactif - BOB</h1>', unsafe_allow_html=True)
+    st.markdown("### Bibliothèque d'Objets Besançon")
+    
+    # Charger les données
+    with st.spinner("Chargement des données..."):
+        df, margins, df_behaviors = load_cached_data()
+    
+    population_totale = int(margins['population'].sum())
+    # Calculer le nombre d'intéressés à partir du pourcentage moyen d'intérêt
+    pct_interet_moyen = df_behaviors['pct_interet'].mean()
+    nb_interesses_total = int(population_totale * pct_interet_moyen / 100)
+    
+    # Sidebar - Paramètres
+    st.sidebar.header("🎛️ Paramètres de Simulation")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📈 Objectif d'Adhérents")
+    
+    # Curseur principal : Nombre d'adhérents
+    nb_adherents = st.sidebar.slider(
+        "Nombre d'adhérents cible",
+        min_value=100,
+        max_value=3000,
+        value=1000,
+        step=50,
+        help="Ajustez le nombre d'adhérents souhaité"
+    )
+    
+    # Pourcentage par rapport aux intéressés
+    pct_conversion = (nb_adherents / nb_interesses_total) * 100
+    st.sidebar.metric(
+        "Taux de conversion",
+        f"{pct_conversion:.1f}%",
+        help="% d'intéressés qui deviennent adhérents"
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💰 Paramètres Tarifaires")
+    
+    # Tarifs de cotisation par type
+    st.sidebar.markdown("**Cotisation annuelle (€)**")
+    cotisation_solidaire = st.sidebar.number_input(
+        "Tarif Solidaire",
+        min_value=0,
+        max_value=50,
+        value=5,
+        step=1,
+        help="Pour étudiants, chômeurs, petits budgets"
+    )
+    
+    cotisation_normale = st.sidebar.number_input(
+        "Tarif Normal",
+        min_value=0,
+        max_value=100,
+        value=10,
+        step=1,
+        help="Tarif standard pour la plupart des adhérents"
+    )
+    
+    cotisation_soutien = st.sidebar.number_input(
+        "Tarif Soutien",
+        min_value=0,
+        max_value=200,
+        value=20,
+        step=1,
+        help="Pour ceux qui souhaitent soutenir davantage le projet"
+    )
+    
+    st.sidebar.markdown("**Prix de location (€/jour)**")
+    prix_location = st.sidebar.number_input(
+        "Prix moyen location",
+        min_value=0.0,
+        max_value=20.0,
+        value=3.0,
+        step=0.5,
+        help="Prix moyen de location d'un objet par jour"
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔄 Fréquence d'Usage")
+    
+    # Nombre moyen de locations par adhérent par an
+    nb_locations_moyen = st.sidebar.number_input(
+        "Nombre moyen de locations par adhérent/an",
+        min_value=1,
+        max_value=50,
+        value=10,
+        step=1,
+        help="Nombre moyen de locations par adhérent et par an"
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📊 Répartition des Tarifs par Profil")
+    
+    st.sidebar.markdown("""
+    **Ajustez les proportions de chaque tarif selon les profils** 
+    
+    Les valeurs doivent totaliser 100% pour chaque profil.
+    """)
+    
+    # Définir les profils disponibles
+    profils_disponibles = {
+        'Jeunes (18-24)': {
+            'age_group': '18-24',
+            'csp': None,
+            'default_solidaire': 80,
+            'default_normale': 20,
+            'default_soutien': 0
+        },
+        'Étudiants/Chômeurs': {
+            'age_group': None,
+            'csp': 'Etudiants/Chomeurs',
+            'default_solidaire': 80,
+            'default_normale': 20,
+            'default_soutien': 0
+        },
+        'Actifs Jeunes (25-34)': {
+            'age_group': '25-34',
+            'csp': 'Actifs',
+            'default_solidaire': 10,
+            'default_normale': 80,
+            'default_soutien': 10
+        },
+        'Actifs Adultes (35-44)': {
+            'age_group': '35-44',
+            'csp': 'Actifs',
+            'default_solidaire': 10,
+            'default_normale': 80,
+            'default_soutien': 10
+        },
+        'Actifs Seniors (45-54)': {
+            'age_group': '45-54',
+            'csp': 'Actifs',
+            'default_solidaire': 5,
+            'default_normale': 55,
+            'default_soutien': 40
+        },
+        'Actifs Seniors (55-64)': {
+            'age_group': '55-64',
+            'csp': 'Actifs',
+            'default_solidaire': 5,
+            'default_normale': 55,
+            'default_soutien': 40
+        },
+        'Retraités (55-64)': {
+            'age_group': '55-64',
+            'csp': 'Retraites',
+            'default_solidaire': 10,
+            'default_normale': 60,
+            'default_soutien': 30
+        },
+        'Retraités (65+)': {
+            'age_group': '65+',
+            'csp': 'Retraites',
+            'default_solidaire': 10,
+            'default_normale': 60,
+            'default_soutien': 30
+        },
+        'Retraités (autres)': {
+            'age_group': None,
+            'csp': 'Retraites',
+            'default_solidaire': 10,
+            'default_normale': 60,
+            'default_soutien': 30
+        },
+        'Autres profils': {
+            'age_group': None,
+            'csp': None,
+            'default_solidaire': 10,
+            'default_normale': 80,
+            'default_soutien': 10
+        }
+    }
+    
+    # Stocker les proportions dans un dictionnaire
+    proportions_par_profil = {}
+    
+    for nom_profil, config in profils_disponibles.items():
+        with st.sidebar.expander(f"📋 {nom_profil}", expanded=False):
+            solidaire = st.slider(
+                f"Solidaire (%)",
+                min_value=0,
+                max_value=100,
+                value=config['default_solidaire'],
+                step=5,
+                key=f"solidaire_{nom_profil}"
+            )
+            
+            normale = st.slider(
+                f"Normal (%)",
+                min_value=0,
+                max_value=100,
+                value=config['default_normale'],
+                step=5,
+                key=f"normale_{nom_profil}"
+            )
+            
+            soutien = st.slider(
+                f"Soutien (%)",
+                min_value=0,
+                max_value=100,
+                value=config['default_soutien'],
+                step=5,
+                key=f"soutien_{nom_profil}"
+            )
+            
+            total = solidaire + normale + soutien
+            if total != 100:
+                st.warning(f"⚠️ Total = {total}% (doit être 100%)")
+            
+            # Normaliser si nécessaire
+            if total > 0:
+                solidaire_norm = solidaire / total * 100
+                normale_norm = normale / total * 100
+                soutien_norm = soutien / total * 100
+            else:
+                solidaire_norm = 0
+                normale_norm = 0
+                soutien_norm = 0
+            
+            proportions_par_profil[nom_profil] = {
+                'age_group': config['age_group'],
+                'csp': config['csp'],
+                'solidaire': solidaire_norm / 100,
+                'normale': normale_norm / 100,
+                'soutien': soutien_norm / 100
+            }
+    
+    st.sidebar.markdown("---")
+    
+    # Bouton de réinitialisation
+    if st.sidebar.button("🔄 Réinitialiser", use_container_width=True):
+        st.rerun()
+    
+    # Calcul de la simulation
+    with st.spinner("Calcul en cours..."):
+        # Distribution des adhérents
+        df_dist = distribute_adherents_by_profile(nb_adherents, df_behaviors, margins)
+        
+        # Calcul des revenus de base
+        df_result = calculate_revenues_by_profile(df_dist)
+        
+        # Calculer la répartition des cotisations par type
+        df_result = calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation_normale, cotisation_soutien, proportions_par_profil)
+        
+        # Appliquer le nombre moyen de locations par adhérent (uniforme pour tous)
+        df_result['nb_locations_an'] = nb_locations_moyen
+        
+        # Recalculer les revenus avec les nouveaux tarifs
+        df_result['revenus_cotisations'] = df_result['nb_adherents'] * df_result['cotisation_moyenne']
+        df_result['revenus_locations'] = (
+            df_result['nb_adherents'] * 
+            nb_locations_moyen * 
+            prix_location
+        )
+        df_result['revenus_totaux'] = df_result['revenus_cotisations'] + df_result['revenus_locations']
+    
+    # Métriques principales
+    st.markdown("## 📊 Résultats de la Simulation")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_adherents = df_result['nb_adherents'].sum()
+    total_cotisations = df_result['revenus_cotisations'].sum()
+    total_locations = df_result['revenus_locations'].sum()
+    total_revenus = df_result['revenus_totaux'].sum()
+    revenu_par_adherent = total_revenus / total_adherents if total_adherents > 0 else 0
+    
+    with col1:
+        st.metric(
+            "👥 Adhérents",
+            format_nombre(total_adherents),
+            f"{format_nombre(pct_conversion, 1)}% des intéressés"
+        )
+    
+    with col2:
+        st.metric(
+            "💶 Cotisations",
+            f"{format_nombre(total_cotisations)} €",
+            f"{format_nombre(total_cotisations/total_adherents)} €/adhérent"
+        )
+    
+    with col3:
+        st.metric(
+            "🔄 Locations",
+            f"{format_nombre(total_locations)} €",
+            f"{nb_locations_moyen} loc/an/adhérent"
+        )
+    
+    with col4:
+        st.metric(
+            "💰 Revenus Totaux",
+            f"{format_nombre(total_revenus)} €",
+            f"{format_nombre(revenu_par_adherent)} €/adhérent"
+        )
+    
+    # Répartition des cotisations
+    st.markdown("---")
+    
+    # Calculer les totaux pour la répartition
+    nb_solidaire_total = int(df_result['nb_solidaire'].sum())
+    nb_normale_total = int(df_result['nb_normale'].sum())
+    nb_soutien_total = int(df_result['nb_soutien'].sum())
+    
+    # Bouton d'export PDF
+    col_export1, col_export2, col_export3 = st.columns([1, 2, 1])
+    with col_export2:
+        if REPORTLAB_AVAILABLE:
+            if st.button("📄 Exporter le Scénario en PDF", use_container_width=True, type="primary"):
+                with st.spinner("Génération du rapport PDF en cours..."):
+                    try:
+                        # Créer le répertoire de sortie temporaire pour les graphiques
+                        temp_dir = BASE_DIR / "outputs" / "temp_export"
+                        temp_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Calculer les métriques supplémentaires
+                        cotisation_moyenne = total_cotisations / total_adherents if total_adherents > 0 else 0
+                        pct_solidaire = (nb_solidaire_total / total_adherents * 100) if total_adherents > 0 else 0
+                        pct_normale = (nb_normale_total / total_adherents * 100) if total_adherents > 0 else 0
+                        pct_soutien = (nb_soutien_total / total_adherents * 100) if total_adherents > 0 else 0
+                        
+                        # Préparer les données du scénario
+                        scenario_data = {
+                            'nb_adherents': nb_adherents,
+                            'cotisation_solidaire': cotisation_solidaire,
+                            'cotisation_normale': cotisation_normale,
+                            'cotisation_soutien': cotisation_soutien,
+                            'prix_location': prix_location,
+                            'nb_locations_moyen': nb_locations_moyen,
+                            'proportions_par_profil': proportions_par_profil,
+                            'total_adherents': total_adherents,
+                            'total_cotisations': total_cotisations,
+                            'total_locations': total_locations,
+                            'total_revenus': total_revenus,
+                            'revenu_par_adherent': revenu_par_adherent,
+                            'cotisation_moyenne': cotisation_moyenne,
+                            'pct_solidaire': pct_solidaire,
+                            'pct_normale': pct_normale,
+                            'pct_soutien': pct_soutien,
+                            'df_result': df_result,
+                            'graphiques_paths': []
+                        }
+                        
+                        # Générer et exporter les graphiques principaux
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        
+                        # Graphique 1: Répartition des revenus
+                        try:
+                            fig_revenus = go.Figure(data=[go.Pie(
+                                labels=['Cotisations', 'Locations'],
+                                values=[total_cotisations, total_locations],
+                                hole=0.4,
+                                marker=dict(colors=['#1f4788', '#2ecc71'])
+                            )])
+                            fig_revenus.update_layout(title="Répartition des Revenus", height=400)
+                            path_revenus = temp_dir / f"repartition_revenus_{timestamp}.png"
+                            if export_plotly_figure(fig_revenus, path_revenus):
+                                scenario_data['graphiques_paths'].append(("Répartition des Revenus", str(path_revenus)))
+                        except Exception as e:
+                            st.warning(f"⚠️ Impossible d'exporter le graphique 'Répartition des Revenus' : {e}")
+                        
+                        # Graphique 2: Distribution par âge
+                        try:
+                            age_dist = df_result.groupby('age_group')['nb_adherents'].sum().sort_values(ascending=True)
+                            fig_age = px.bar(
+                                x=age_dist.values,
+                                y=age_dist.index,
+                                orientation='h',
+                                title="Distribution par Âge",
+                                labels={'x': 'Nombre d\'adhérents', 'y': 'Tranche d\'âge'},
+                                color=age_dist.values,
+                                color_continuous_scale='Blues'
+                            )
+                            fig_age.update_layout(height=400, showlegend=False)
+                            path_age = temp_dir / f"distribution_age_{timestamp}.png"
+                            if export_plotly_figure(fig_age, path_age):
+                                scenario_data['graphiques_paths'].append(("Distribution par Âge", str(path_age)))
+                        except Exception as e:
+                            st.warning(f"⚠️ Impossible d'exporter le graphique 'Distribution par Âge' : {e}")
+                        
+                        # Graphique 3: Répartition des cotisations
+                        try:
+                            cotisation_data = pd.DataFrame({
+                                'Type': ['Solidaire', 'Normal', 'Soutien'],
+                                'Nombre': [nb_solidaire_total, nb_normale_total, nb_soutien_total],
+                                'Tarif': [f'{cotisation_solidaire}€', f'{cotisation_normale}€', f'{cotisation_soutien}€']
+                            })
+                            fig_cotis = go.Figure(data=[go.Pie(
+                                labels=[f"{row['Type']}<br>{row['Tarif']}" for _, row in cotisation_data.iterrows()],
+                                values=cotisation_data['Nombre'],
+                                marker=dict(colors=['#f39c12', '#1f4788', '#27ae60'])
+                            )])
+                            fig_cotis.update_layout(title="Répartition des Cotisations", height=400)
+                            path_cotis = temp_dir / f"repartition_cotisations_{timestamp}.png"
+                            if export_plotly_figure(fig_cotis, path_cotis):
+                                scenario_data['graphiques_paths'].append(("Répartition des Cotisations", str(path_cotis)))
+                        except Exception as e:
+                            st.warning(f"⚠️ Impossible d'exporter le graphique 'Répartition des Cotisations' : {e}")
+                        
+                        # Générer le PDF
+                        pdf_path = BASE_DIR / "outputs" / "reports" / f"scenario_bob_{timestamp}.pdf"
+                        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        generate_scenario_pdf(scenario_data, pdf_path)
+                        
+                        # Afficher le succès et le bouton de téléchargement
+                        st.success(f"✅ Rapport PDF généré avec succès !")
+                        
+                        # Bouton de téléchargement
+                        with open(pdf_path, 'rb') as pdf_file:
+                            pdf_bytes = pdf_file.read()
+                            st.download_button(
+                                label="📥 Télécharger le PDF",
+                                data=pdf_bytes,
+                                file_name=f"scenario_bob_{timestamp}.pdf",
+                                mime='application/pdf',
+                                use_container_width=True
+                            )
+                        
+                        st.info(f"📁 Fichier sauvegardé : {pdf_path}")
+                        
+                    except Exception as e:
+                        st.error(f"Erreur lors de la génération du PDF : {e}")
+                        import traceback
+                        st.code(traceback.format_exc(), language='python')
+        else:
+            st.info("💡 Pour activer l'export PDF, installez ReportLab : `pip install reportlab kaleido`")
+    
+    st.markdown("---")
+    st.markdown("### 💶 Répartition des Cotisations")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            f"Tarif Solidaire ({cotisation_solidaire}€)",
+            format_nombre(nb_solidaire_total),
+            f"{format_nombre(nb_solidaire_total/total_adherents*100, 1)}%"
+        )
+    
+    with col2:
+        st.metric(
+            f"Tarif Normal ({cotisation_normale}€)",
+            format_nombre(nb_normale_total),
+            f"{format_nombre(nb_normale_total/total_adherents*100, 1)}%"
+        )
+    
+    with col3:
+        st.metric(
+            f"Tarif Soutien ({cotisation_soutien}€)",
+            format_nombre(nb_soutien_total),
+            f"{format_nombre(nb_soutien_total/total_adherents*100, 1)}%"
+        )
+    
+    # Graphiques
+    st.markdown("---")
+    
+    # Onglets
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 Vue d'ensemble", 
+        "👥 Profils", 
+        "💰 Revenus", 
+        "📊 Détails",
+        "📋 Résultats Enquête"
+    ])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Répartition des revenus
+            fig_revenus = go.Figure(data=[go.Pie(
+                labels=['Cotisations', 'Locations'],
+                values=[total_cotisations, total_locations],
+                hole=0.4,
+                marker=dict(colors=['#1f4788', '#2ecc71'])
+            )])
+            fig_revenus.update_layout(
+                title="Répartition des Revenus",
+                height=400
+            )
+            st.plotly_chart(fig_revenus, use_container_width=True)
+        
+        with col2:
+            # Distribution par âge
+            age_dist = df_result.groupby('age_group')['nb_adherents'].sum().sort_values(ascending=True)
+            fig_age = px.bar(
+                x=age_dist.values,
+                y=age_dist.index,
+                orientation='h',
+                title="Distribution par Âge",
+                labels={'x': 'Nombre d\'adhérents', 'y': 'Tranche d\'âge'},
+                color=age_dist.values,
+                color_continuous_scale='Blues'
+            )
+            fig_age.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig_age, use_container_width=True)
+        
+        # Distribution par sexe et CSP
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            sexe_dist = df_result.groupby('sexe')['nb_adherents'].sum()
+            sexe_labels = ['Femmes' if x == 'F' else 'Hommes' for x in sexe_dist.index]
+            fig_sexe = go.Figure(data=[go.Pie(
+                labels=sexe_labels,
+                values=sexe_dist.values,
+                marker=dict(colors=['#e74c3c', '#3498db'])
+            )])
+            fig_sexe.update_layout(title="Distribution par Sexe", height=400)
+            st.plotly_chart(fig_sexe, use_container_width=True)
+        
+        with col4:
+            # Répartition des cotisations
+            cotisation_data = pd.DataFrame({
+                'Type': ['Solidaire', 'Normal', 'Soutien'],
+                'Nombre': [nb_solidaire_total, nb_normale_total, nb_soutien_total],
+                'Tarif': [f'{cotisation_solidaire}€', f'{cotisation_normale}€', f'{cotisation_soutien}€']
+            })
+            fig_cotis = go.Figure(data=[go.Pie(
+                labels=[f"{row['Type']}<br>{row['Tarif']}" for _, row in cotisation_data.iterrows()],
+                values=cotisation_data['Nombre'],
+                marker=dict(colors=['#f39c12', '#1f4788', '#27ae60'])
+            )])
+            fig_cotis.update_layout(title="Répartition des Cotisations", height=400)
+            st.plotly_chart(fig_cotis, use_container_width=True)
+        
+        # Distribution par CSP
+        st.markdown("### Distribution par CSP")
+        col5, col6 = st.columns([2, 1])
+        
+        with col5:
+            csp_dist = df_result.groupby('csp')['nb_adherents'].sum().sort_values(ascending=True)
+            fig_csp = px.bar(
+                x=csp_dist.values,
+                y=csp_dist.index,
+                orientation='h',
+                title="Distribution par CSP",
+                labels={'x': 'Nombre d\'adhérents', 'y': 'Situation professionnelle'},
+                color=csp_dist.values,
+                color_continuous_scale='Greens'
+            )
+            fig_csp.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig_csp, use_container_width=True)
+    
+    with tab2:
+        st.subheader("🏆 Top 10 Profils Contributeurs")
+        
+        top10 = df_result.nlargest(10, 'revenus_totaux')[
+            ['profil', 'nb_adherents', 'revenus_cotisations', 'revenus_locations', 'revenus_totaux']
+        ].copy()
+        
+        top10.columns = ['Profil', 'Adhérents', 'Cotisations (€)', 'Locations (€)', 'Total (€)']
+        top10['Cotisations (€)'] = top10['Cotisations (€)'].round(0).astype(int)
+        top10['Locations (€)'] = top10['Locations (€)'].round(0).astype(int)
+        top10['Total (€)'] = top10['Total (€)'].round(0).astype(int)
+        
+        st.dataframe(top10, use_container_width=True, hide_index=True)
+        
+        # Graphique des top profils
+        fig_top = px.bar(
+            top10,
+            x='Total (€)',
+            y='Profil',
+            orientation='h',
+            title="Revenus par Profil (Top 10)",
+            color='Total (€)',
+            color_continuous_scale='Viridis'
+        )
+        fig_top.update_layout(height=500, showlegend=False)
+        st.plotly_chart(fig_top, use_container_width=True)
+    
+    with tab3:
+        st.subheader("💰 Analyse des Revenus")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Revenus par âge
+            revenus_age = df_result.groupby('age_group')['revenus_totaux'].sum().sort_values(ascending=False)
+            fig_rev_age = px.bar(
+                x=revenus_age.index,
+                y=revenus_age.values,
+                title="Revenus par Tranche d'Âge",
+                labels={'x': 'Âge', 'y': 'Revenus (€)'},
+                color=revenus_age.values,
+                color_continuous_scale='RdYlGn'
+            )
+            fig_rev_age.update_layout(showlegend=False)
+            st.plotly_chart(fig_rev_age, use_container_width=True)
+        
+        with col2:
+            # Revenus par CSP
+            revenus_csp = df_result.groupby('csp')['revenus_totaux'].sum().sort_values(ascending=False)
+            fig_rev_csp = px.bar(
+                x=revenus_csp.index,
+                y=revenus_csp.values,
+                title="Revenus par CSP",
+                labels={'x': 'CSP', 'y': 'Revenus (€)'},
+                color=revenus_csp.values,
+                color_continuous_scale='Blues'
+            )
+            fig_rev_csp.update_layout(showlegend=False)
+            st.plotly_chart(fig_rev_csp, use_container_width=True)
+        
+        # Heatmap revenus par âge et sexe
+        pivot_revenus = df_result.pivot_table(
+            values='revenus_totaux',
+            index='age_group',
+            columns='sexe',
+            aggfunc='sum'
+        )
+        pivot_revenus.columns = ['Femmes', 'Hommes']
+        
+        fig_heatmap = px.imshow(
+            pivot_revenus,
+            title="Heatmap des Revenus (Âge × Sexe)",
+            labels=dict(x="Sexe", y="Âge", color="Revenus (€)"),
+            color_continuous_scale='YlOrRd',
+            aspect='auto'
+        )
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+    
+    with tab4:
+        st.subheader("📋 Tableau Détaillé par Profil")
+        
+        # Préparer le tableau
+        df_export = df_result[[
+            'profil', 'age_group', 'sexe', 'csp',
+            'population', 'pct_interet', 'nb_adherents',
+            'nb_solidaire', 'nb_normale', 'nb_soutien', 'cotisation_moyenne',
+            'nb_locations_an',
+            'revenus_cotisations', 'revenus_locations', 'revenus_totaux'
+        ]].copy()
+        
+        df_export.columns = [
+            'Profil', 'Âge', 'Sexe', 'CSP',
+            'Population', 'Intérêt (%)', 'Adhérents',
+            'Nb Solidaire', 'Nb Normal', 'Nb Soutien', 'Cotis. Moy. (€)',
+            'Locations/an',
+            'Rev. Cotisations (€)', 'Rev. Locations (€)', 'Rev. Totaux (€)'
+        ]
+        
+        # Arrondir
+        for col in ['Cotis. Moy. (€)', 'Rev. Cotisations (€)', 'Rev. Locations (€)', 'Rev. Totaux (€)']:
+            df_export[col] = df_export[col].round(0).astype(int)
+        
+        for col in ['Nb Solidaire', 'Nb Normal', 'Nb Soutien']:
+            df_export[col] = df_export[col].astype(int)
+        
+        df_export['Intérêt (%)'] = df_export['Intérêt (%)'].round(1)
+        df_export['Population'] = df_export['Population'].round(0).astype(int)
+        
+        # Filtres
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            age_filter = st.multiselect(
+                "Filtrer par âge",
+                options=sorted(df_export['Âge'].unique()),
+                default=sorted(df_export['Âge'].unique())
+            )
+        
+        with col2:
+            sexe_filter = st.multiselect(
+                "Filtrer par sexe",
+                options=['F', 'M'],
+                default=['F', 'M']
+            )
+        
+        with col3:
+            csp_filter = st.multiselect(
+                "Filtrer par CSP",
+                options=sorted(df_export['CSP'].unique()),
+                default=sorted(df_export['CSP'].unique())
+            )
+        
+        # Appliquer les filtres
+        df_filtered = df_export[
+            (df_export['Âge'].isin(age_filter)) &
+            (df_export['Sexe'].isin(sexe_filter)) &
+            (df_export['CSP'].isin(csp_filter))
+        ]
+        
+        st.dataframe(
+            df_filtered.sort_values('Rev. Totaux (€)', ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Bouton d'export
+        csv = df_filtered.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 Télécharger en CSV",
+            data=csv,
+            file_name=f'simulation_bob_{nb_adherents}_adherents.csv',
+            mime='text/csv',
+        )
+    
+    with tab5:
+        st.subheader("📋 Résultats de l'Enquête (Redressés)")
+        
+        st.markdown("""
+        Cette section présente les réponses à l'enquête BOB **redressées** selon les effectifs 
+        réels de la population des IRIS centre-ville de Besançon.
+        
+        **Pourquoi le redressement ?**
+        - L'échantillon de l'enquête ne reflète pas exactement la structure démographique de la population
+        - Le redressement applique des poids pour corriger ces biais
+        - Les résultats redressés sont plus représentatifs de la population cible
+        """)
+        
+        # Charger les données redressées
+        with st.spinner("Chargement et redressement des données de l'enquête..."):
+            try:
+                df_survey, survey_config = load_weighted_survey_data()
+                
+                # Vérifier la taille de l'échantillon par profil
+                seuil_minimum = 5  # Minimum de répondants par profil pour des résultats fiables
+                
+                def check_sample_size(df, var_name, seuil=seuil_minimum):
+                    """Vérifie la taille de l'échantillon par catégorie et retourne les warnings."""
+                    counts = df[var_name].value_counts()
+                    warnings = []
+                    for category, count in counts.items():
+                        if count < seuil:
+                            warnings.append(f"- **{category}** : {count} répondant(s) (minimum recommandé : {seuil})")
+                    return warnings, counts
+                
+                # Vérifications par profil
+                warnings_age = []
+                warnings_sexe = []
+                warnings_csp = []
+                
+                if 'age_group' in df_survey.columns:
+                    warnings_age, counts_age = check_sample_size(df_survey, 'age_group', seuil_minimum)
+                
+                if 'sexe' in df_survey.columns:
+                    warnings_sexe, counts_sexe = check_sample_size(df_survey, 'sexe', seuil_minimum)
+                
+                if 'csp' in df_survey.columns:
+                    warnings_csp, counts_csp = check_sample_size(df_survey, 'csp', seuil_minimum)
+                
+                # Afficher les warnings si nécessaire
+                all_warnings = warnings_age + warnings_sexe + warnings_csp
+                if all_warnings:
+                    st.warning("""
+                    ⚠️ **Attention : Échantillon trop petit pour certains profils**
+                    
+                    Les résultats redressés peuvent être peu fiables pour les catégories suivantes avec trop peu de répondants :
+                    
+                    """ + "\n".join(all_warnings) + f"""
+                    
+                    **Recommandation** : Interprétez ces résultats avec prudence. Un minimum de {seuil_minimum} répondants par catégorie est recommandé pour des résultats statistiquement fiables.
+                    """)
+                
+                # Statistiques du redressement
+                st.markdown("---")
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Répondants Besançon", format_nombre(len(df_survey)))
+                
+                with col2:
+                    st.metric("Poids min", format_nombre(df_survey['weight'].min(), 2))
+                
+                with col3:
+                    st.metric("Poids max", format_nombre(df_survey['weight'].max(), 2))
+                
+                with col4:
+                    st.metric("Poids moyen", format_nombre(df_survey['weight'].mean(), 2))
+                
+                st.markdown("---")
+                
+                # Sous-onglets pour différentes questions
+                subtab1, subtab2, subtab3, subtab4 = st.tabs([
+                    "🎯 Intérêt & Cotisation",
+                    "🔄 Partage & Usage",
+                    "💶 Prix & Budget",
+                    "📊 Analyses Croisées"
+                ])
+                
+                with subtab1:
+                    st.markdown("### Intérêt pour le projet et acceptation de la cotisation")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Intérêt pour le projet
+                        if 'interet_projet' in df_survey.columns:
+                            data_weighted = df_survey.groupby('interet_projet')['weight'].sum()
+                            data_pct = (data_weighted / data_weighted.sum() * 100)
+                            
+                            # Utiliser des couleurs distinctes pour chaque catégorie
+                            colors = get_distinct_colors(data_pct.index, color_scheme='positive_negative')
+                            
+                            fig = go.Figure(data=[go.Pie(
+                                labels=data_pct.index,
+                                values=data_pct.values,
+                                marker=dict(colors=colors),
+                                textinfo='label+percent',
+                                textposition='auto'
+                            )])
+                            fig.update_layout(
+                                title="Intérêt pour le projet<br>(Résultats redressés)",
+                                height=400
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Vérifier les effectifs par réponse
+                            counts_raw = df_survey['interet_projet'].value_counts()
+                            small_categories = [cat for cat, count in counts_raw.items() if count < seuil_minimum]
+                            if small_categories:
+                                st.info(f"⚠️ **Note** : Les catégories suivantes ont moins de {seuil_minimum} répondants bruts : {', '.join([str(c) for c in small_categories])}. Interprétez ces résultats avec prudence.")
+                            
+                            # Comparaison avec résultats bruts
+                            data_raw = df_survey['interet_projet'].value_counts()
+                            data_raw_pct = (data_raw / data_raw.sum() * 100)
+                            
+                            st.markdown("**Comparaison Brut vs Redressé :**")
+                            comp_df = pd.DataFrame({
+                                'Réponse': data_pct.index,
+                                'Brut (%)': [format_nombre(data_raw_pct.get(x, 0), 1) for x in data_pct.index],
+                                'Redressé (%)': [format_nombre(val, 1) for val in data_pct.values]
+                            })
+                            st.dataframe(comp_df, hide_index=True, use_container_width=True)
+                    
+                    with col2:
+                        # Acceptation cotisation
+                        if 'accepte_cotisation' in df_survey.columns:
+                            data_weighted = df_survey.groupby('accepte_cotisation')['weight'].sum()
+                            data_pct = (data_weighted / data_weighted.sum() * 100)
+                            
+                            # Simplifier les labels
+                            labels_short = [str(x)[:30] + '...' if len(str(x)) > 30 else str(x) for x in data_pct.index]
+                            # Utiliser des couleurs distinctes pour chaque catégorie
+                            colors = get_distinct_colors(data_pct.index, color_scheme='positive_negative')
+                            
+                            fig = go.Figure(data=[go.Pie(
+                                labels=labels_short,
+                                values=data_pct.values,
+                                marker=dict(colors=colors),
+                                textinfo='percent',
+                                textposition='auto'
+                            )])
+                            fig.update_layout(
+                                title="Acceptation cotisation<br>(Résultats redressés)",
+                                height=400
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Vérifier les effectifs par réponse
+                            counts_raw = df_survey['accepte_cotisation'].value_counts()
+                            small_categories = [cat for cat, count in counts_raw.items() if count < seuil_minimum]
+                            if small_categories:
+                                st.info(f"⚠️ **Note** : {len(small_categories)} catégorie(s) ont moins de {seuil_minimum} répondants bruts. Interprétez ces résultats avec prudence.")
+                            
+                            # Comparaison avec résultats bruts
+                            data_raw = df_survey['accepte_cotisation'].value_counts()
+                            data_raw_pct = (data_raw / data_raw.sum() * 100)
+                            
+                            st.markdown("**Comparaison Brut vs Redressé :**")
+                            comp_df = pd.DataFrame({
+                                'Réponse': labels_short,
+                                'Brut (%)': [format_nombre(data_raw_pct.get(x, 0), 1) for x in data_pct.index],
+                                'Redressé (%)': [format_nombre(val, 1) for val in data_pct.values]
+                            })
+                            st.dataframe(comp_df, hide_index=True, use_container_width=True)
+                
+                with subtab2:
+                    st.markdown("### Partage d'objets et utilisation de services")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Partage d'objets
+                        if 'partage_oui' in df_survey.columns:
+                            data_weighted = df_survey.groupby('partage_oui')['weight'].sum()
+                            data_pct = (data_weighted / data_weighted.sum() * 100)
+                            
+                            fig = px.bar(
+                                x=data_pct.index,
+                                y=data_pct.values,
+                                labels={'x': 'Réponse', 'y': 'Pourcentage (%)'},
+                                title="Accepte de partager des objets (Redressé)",
+                                color=data_pct.values,
+                                color_continuous_scale='RdYlGn'
+                            )
+                            fig.update_layout(height=400, showlegend=False)
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        # Utilisation de services
+                        if 'deja_utilise_services' in df_survey.columns:
+                            data_weighted = df_survey.groupby('deja_utilise_services')['weight'].sum()
+                            data_pct = (data_weighted / data_weighted.sum() * 100)
+                            
+                            # Couleurs sémantiques pour l'utilisation de services
+                            # Rouge = jamais, Orange = occasionnellement, Vert = régulièrement
+                            color_map = {
+                                'non, jamais': '#e74c3c',  # Rouge
+                                'non jamais': '#e74c3c',
+                                'jamais': '#e74c3c',
+                                'non': '#e74c3c',
+                                'oui, occasionnellement': '#f39c12',  # Orange
+                                'occasionnellement': '#f39c12',
+                                'oui, régulièrement': '#2ecc71',  # Vert
+                                'régulièrement': '#2ecc71',
+                                'oui': '#2ecc71'
+                            }
+                            
+                            # Créer la liste de couleurs
+                            bar_colors = []
+                            for label in data_pct.index:
+                                label_lower = str(label).lower()
+                                color_found = None
+                                
+                                # Chercher la correspondance la plus spécifique
+                                for key, color in sorted(color_map.items(), key=len, reverse=True):
+                                    if key in label_lower:
+                                        color_found = color
+                                        break
+                                
+                                # Si pas trouvé, utiliser une couleur par défaut
+                                if not color_found:
+                                    color_found = '#3498db'  # Bleu par défaut
+                                
+                                bar_colors.append(color_found)
+                            
+                            # Créer le graphique avec des couleurs distinctes
+                            fig = go.Figure(data=[go.Bar(
+                                x=data_pct.index,
+                                y=data_pct.values,
+                                marker=dict(color=bar_colors),
+                                text=[f"{val:.1f}%" for val in data_pct.values],
+                                textposition='outside'
+                            )])
+                            
+                            fig.update_layout(
+                                title="A déjà utilisé des services de location/prêt (Redressé)",
+                                xaxis_title="Réponse",
+                                yaxis_title="Pourcentage (%)",
+                                height=400,
+                                showlegend=False
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                
+                with subtab3:
+                    st.markdown("### Prix maximum accepté pour la location")
+                    
+                    if 'prix_max_location' in df_survey.columns:
+                        df_clean = df_survey[df_survey['prix_max_location'].notna()].copy()
+                        
+                        # Convertir prix_max_location en numérique si c'est une chaîne
+                        # Supprime les caractères non numériques (€, espaces, etc.)
+                        def convert_price_to_numeric(value):
+                            """Convertit une valeur de prix en numérique."""
+                            if pd.isna(value):
+                                return np.nan
+                            if isinstance(value, (int, float)):
+                                return float(value)
+                            # Si c'est une chaîne, extraire le nombre
+                            match = re.search(r'(\d+(?:[.,]\d+)?)', str(value))
+                            if match:
+                                # Remplacer la virgule par un point pour la conversion
+                                return float(match.group(1).replace(',', '.'))
+                            return np.nan
+                        
+                        df_clean['prix_max_location_numeric'] = df_clean['prix_max_location'].apply(convert_price_to_numeric)
+                        df_clean_numeric = df_clean[df_clean['prix_max_location_numeric'].notna()].copy()
+                        
+                        if len(df_clean_numeric) > 0:
+                            # Calculer la moyenne pondérée
+                            mean_weighted = np.average(df_clean_numeric['prix_max_location_numeric'], weights=df_clean_numeric['weight'])
+                            mean_raw = df_clean_numeric['prix_max_location_numeric'].mean()
+                        
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Prix moyen (Redressé)", f"{format_nombre(mean_weighted, 2)} €")
+                            with col2:
+                                st.metric("Prix moyen (Brut)", f"{format_nombre(mean_raw, 2)} €")
+                            with col3:
+                                diff = mean_weighted - mean_raw
+                                signe = "+" if diff >= 0 else ""
+                                st.metric("Différence", f"{signe}{format_nombre(diff, 2)} €")
+                            
+                            # Histogramme
+                            fig = go.Figure()
+                            
+                            # Résultats redressés
+                            fig.add_trace(go.Histogram(
+                                x=df_clean_numeric['prix_max_location_numeric'],
+                                histfunc='sum',
+                                y=df_clean_numeric['weight'],
+                                name='Redressé',
+                                marker_color='steelblue',
+                                opacity=0.7,
+                                nbinsx=15
+                            ))
+                            
+                            # Ligne de moyenne
+                            fig.add_vline(
+                                x=mean_weighted,
+                                line_dash="dash",
+                                line_color="red",
+                                annotation_text=f"Moyenne: {format_nombre(mean_weighted, 2)}€"
+                            )
+                            
+                            fig.update_layout(
+                                title="Distribution du prix maximum accepté (Redressé)",
+                                xaxis_title="Prix (€)",
+                                yaxis_title="Effectif pondéré",
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("Aucune donnée numérique valide trouvée dans la colonne 'prix_max_location'.")
+                
+                with subtab4:
+                    st.markdown("### Analyses croisées par profil")
+                    
+                    # Sélection de la variable à analyser
+                    analyse_vars = []
+                    if 'interet_projet' in df_survey.columns:
+                        analyse_vars.append('interet_projet')
+                    if 'accepte_cotisation' in df_survey.columns:
+                        analyse_vars.append('accepte_cotisation')
+                    if 'partage_oui' in df_survey.columns:
+                        analyse_vars.append('partage_oui')
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        analyse_var = st.selectbox(
+                            "Variable à analyser",
+                            analyse_vars if analyse_vars else ['interet_projet'],
+                            format_func=lambda x: {
+                                'interet_projet': 'Intérêt pour le projet',
+                                'accepte_cotisation': 'Acceptation cotisation',
+                                'partage_oui': 'Partage d\'objets'
+                            }.get(x, x)
+                        )
+                    
+                    with col2:
+                        profile_var = st.selectbox(
+                            "Variable de profil",
+                            ['age_group', 'sexe', 'csp'],
+                            format_func=lambda x: {
+                                'age_group': 'Tranche d\'âge',
+                                'sexe': 'Sexe',
+                                'csp': 'Situation professionnelle'
+                            }.get(x, x)
+                        )
+                    
+                    # Créer le graphique croisé
+                    if analyse_var and profile_var:
+                        # Vérifier les effectifs bruts par cellule (croisement)
+                        crosstab_counts = pd.crosstab(
+                            df_survey[profile_var],
+                            df_survey[analyse_var]
+                        )
+                        
+                        # Détecter les cellules avec trop peu de répondants
+                        cellules_peu_fiables = []
+                        for i in crosstab_counts.index:
+                            for j in crosstab_counts.columns:
+                                count = crosstab_counts.loc[i, j]
+                                if count > 0 and count < seuil_minimum:
+                                    cellules_peu_fiables.append({
+                                        'profil': i,
+                                        'reponse': j,
+                                        'nb': count
+                                    })
+                        
+                        # Afficher un warning si nécessaire
+                        if cellules_peu_fiables:
+                            st.warning(f"""
+                            ⚠️ **Attention : Échantillons trop petits dans certaines cellules**
+                            
+                            Les résultats suivants sont basés sur moins de {seuil_minimum} répondants bruts et peuvent être peu fiables :
+                            
+                            """ + "\n".join([
+                                f"- **{cell['profil']} × {cell['reponse']}** : {cell['nb']} répondant(s)"
+                                for cell in cellules_peu_fiables[:10]  # Limiter à 10 pour ne pas surcharger
+                            ]) + (f"\n\n... et {len(cellules_peu_fiables) - 10} autre(s)" if len(cellules_peu_fiables) > 10 else "") + f"""
+                            
+                            **Effectifs bruts par cellule** (recommandé ≥ {seuil_minimum} par cellule) :
+                            """)
+                            
+                            # Afficher le tableau des effectifs avec mise en évidence
+                            st.dataframe(
+                                crosstab_counts,
+                                use_container_width=True
+                            )
+                            
+                            st.caption(f"⚠️ Les valeurs en rouge dans le tableau ci-dessus indiquent des effectifs < {seuil_minimum} répondants (peu fiables).")
+                        
+                        # Créer le tableau des pourcentages redressés
+                        crosstab = pd.crosstab(
+                            df_survey[profile_var],
+                            df_survey[analyse_var],
+                            values=df_survey['weight'],
+                            aggfunc='sum',
+                            normalize='index'
+                        ) * 100
+                        
+                        fig = go.Figure()
+                        
+                        for col in crosstab.columns:
+                            fig.add_trace(go.Bar(
+                                name=str(col)[:30],
+                                x=crosstab.index,
+                                y=crosstab[col],
+                            ))
+                        
+                        fig.update_layout(
+                            barmode='group',
+                            title=f"{analyse_var} selon {profile_var} (Redressé)",
+                            xaxis_title=profile_var,
+                            yaxis_title="Pourcentage (%)",
+                            height=500,
+                            legend_title=analyse_var
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Afficher le tableau
+                        st.markdown("**Tableau détaillé (%) :**")
+                        # Formater le tableau avec virgules pour décimales
+                        crosstab_formatted = crosstab.map(lambda x: format_nombre(x, 1))
+                        st.dataframe(crosstab_formatted, use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Erreur lors du chargement des données de l'enquête : {e}")
+                st.info("Vérifiez que les fichiers de données sont correctement configurés.")
+                import traceback
+                st.code(traceback.format_exc(), language='python')
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666;'>
+        <p>Simulateur BOB - Bibliothèque d'Objets Besançon</p>
+        <p>Ajustez les curseurs dans la barre latérale pour explorer différents scénarios</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == '__main__':
+    main()
+
