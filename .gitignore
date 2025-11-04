@@ -36,15 +36,20 @@ ENV/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Données sensibles (décommenter si nécessaire)
-# data/raw/*.xlsx
-# data/raw/*.csv
+# Données volumineuses - Exclure du repository
+# (Utiliser Git LFS ou stocker ailleurs)
+data/base-ic-evol-struct-pop-2022_csv/
+data/raw/*.xlsx
+data/raw/*.csv
+# Garder seulement les fichiers essentiels pour Streamlit Cloud
+# data/margins/margins_center.csv - À inclure si nécessaire
 
 # Sorties (peuvent être regénérées)
 outputs/figures/*.png
 outputs/reports/*.pdf
 outputs/reports/*.html
 outputs/reports/*.csv
+outputs/temp_export/
 
 # Logs
 *.log

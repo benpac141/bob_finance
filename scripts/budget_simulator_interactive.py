@@ -4,7 +4,7 @@ Simulateur de budget interactif avec ajustement du nombre d'adhérents cible.
 Fonctionnalités :
 - Définir un nombre d'adhérents cible
 - Redistribution automatique par profil (âge, sexe, CSP)
-- Calcul des revenus selon les comportements par profil
+- Calcul des recettes selon les comportements par profil
 - Export Excel avec tableaux de bord
 """
 
@@ -218,15 +218,15 @@ def distribute_adherents_by_profile(nb_adherents_cible, df_behaviors, margins):
     return df_dist
 
 
-def calculate_revenues_by_profile(df_dist):
+def calculate_recettes_by_profile(df_dist):
     """
-    Calcule les revenus par profil selon les comportements.
+    Calcule les recettes par profil selon les comportements.
     
     Args:
         df_dist: DataFrame avec la distribution des adhérents
     
     Returns:
-        DataFrame enrichi avec les revenus
+        DataFrame enrichi avec les recettes
     """
     df_rev = df_dist.copy()
     
@@ -240,18 +240,18 @@ def calculate_revenues_by_profile(df_dist):
         axis=1
     )
     
-    # Revenus cotisations (selon préférence du profil)
-    df_rev['revenus_cotisations'] = df_rev['nb_adherents'] * df_rev['cotisation_preferee']
+    # Recettes cotisations (selon préférence du profil)
+    df_rev['recettes_cotisations'] = df_rev['nb_adherents'] * df_rev['cotisation_preferee']
     
-    # Revenus locations (selon prix max accepté et fréquence)
-    df_rev['revenus_locations'] = (
+    # Recettes locations (selon prix max accepté et fréquence)
+    df_rev['recettes_locations'] = (
         df_rev['nb_adherents'] * 
         df_rev['nb_locations_an'] * 
         df_rev['prix_max_location'] * 0.8  # 80% du prix max en moyenne
     )
     
-    # Revenus totaux
-    df_rev['revenus_totaux'] = df_rev['revenus_cotisations'] + df_rev['revenus_locations']
+    # Recettes totales
+    df_rev['recettes_totales'] = df_rev['recettes_cotisations'] + df_rev['recettes_locations']
     
     return df_rev
 
@@ -272,8 +272,8 @@ def generate_simulation(nb_adherents_cible, df_behaviors, margins, scenario_name
     # 1. Distribuer les adhérents
     df_dist = distribute_adherents_by_profile(nb_adherents_cible, df_behaviors, margins)
     
-    # 2. Calculer les revenus
-    df_result = calculate_revenues_by_profile(df_dist)
+    # 2. Calculer les recettes
+    df_result = calculate_recettes_by_profile(df_dist)
     
     # 3. Ajouter des métriques
     df_result['scenario'] = scenario_name
@@ -289,9 +289,9 @@ def print_simulation_summary(df_result, scenario_name):
     
     # Totaux
     total_adherents = df_result['nb_adherents'].sum()
-    total_cotisations = df_result['revenus_cotisations'].sum()
-    total_locations = df_result['revenus_locations'].sum()
-    total_revenus = df_result['revenus_totaux'].sum()
+    total_cotisations = df_result['recettes_cotisations'].sum()
+    total_locations = df_result['recettes_locations'].sum()
+    total_recettes = df_result['recettes_totales'].sum()
     
     # Moyennes
     cotisation_moy = df_result['cotisation_preferee'].mean()
@@ -300,16 +300,16 @@ def print_simulation_summary(df_result, scenario_name):
     
     print(f"\nOBJECTIF : {total_adherents:,} adherents")
     
-    print(f"\nREVENUS ANNUELS :")
+    print(f"\nRECETTES ANNUELLES :")
     print(f"  - Cotisations : {total_cotisations:,.0f} EUR")
     print(f"  - Locations   : {total_locations:,.0f} EUR")
-    print(f"  - TOTAL       : {total_revenus:,.0f} EUR")
+    print(f"  - TOTAL       : {total_recettes:,.0f} EUR")
     
     print(f"\nMOYENNES PAR ADHERENT :")
     print(f"  - Cotisation : {cotisation_moy:.1f} EUR/an")
     print(f"  - Locations  : {locations_moy:.1f} locations/an")
     print(f"  - Prix moyen : {prix_moy:.1f} EUR/location")
-    print(f"  - Revenu/adherent : {total_revenus/total_adherents:.0f} EUR/an")
+    print(f"  - Recette/adherent : {total_recettes/total_adherents:.0f} EUR/an")
     
     # Distribution par âge
     print(f"\nDISTRIBUTION PAR AGE :")
@@ -334,10 +334,10 @@ def print_simulation_summary(df_result, scenario_name):
         print(f"  - {csp:20s} : {nb:4d} adherents ({pct:5.1f}%)")
     
     # Top 5 profils
-    print(f"\nTop 5 profils contributeurs (revenus) :")
-    top5 = df_result.nlargest(5, 'revenus_totaux')
+    print(f"\nTop 5 profils contributeurs (recettes) :")
+    top5 = df_result.nlargest(5, 'recettes_totales')
     for i, (_, row) in enumerate(top5.iterrows(), 1):
-        print(f"  {i}. {row['profil']:40s} : {row['revenus_totaux']:8,.0f} EUR "
+        print(f"  {i}. {row['profil']:40s} : {row['recettes_totales']:8,.0f} EUR "
               f"({row['nb_adherents']:4d} adherents)")
 
 
@@ -355,10 +355,10 @@ def export_simulation_excel(simulations, output_path):
                 'Cotisation_Moyenne_EUR': df_result['cotisation_preferee'].mean(),
                 'Locations_Moyenne_An': df_result['nb_locations_an'].mean(),
                 'Prix_Moyen_EUR': df_result['prix_max_location'].mean(),
-                'Revenus_Cotisations_EUR': int(df_result['revenus_cotisations'].sum()),
-                'Revenus_Locations_EUR': int(df_result['revenus_locations'].sum()),
-                'Revenus_Totaux_EUR': int(df_result['revenus_totaux'].sum()),
-                'Revenu_Par_Adherent_EUR': int(df_result['revenus_totaux'].sum() / df_result['nb_adherents'].sum())
+                'Recettes_Cotisations_EUR': int(df_result['recettes_cotisations'].sum()),
+                'Recettes_Locations_EUR': int(df_result['recettes_locations'].sum()),
+                'Recettes_Totales_EUR': int(df_result['recettes_totales'].sum()),
+                'Recette_Par_Adherent_EUR': int(df_result['recettes_totales'].sum() / df_result['nb_adherents'].sum())
             })
         
         df_summary = pd.DataFrame(summary_data)
@@ -370,14 +370,14 @@ def export_simulation_excel(simulations, output_path):
                 'profil', 'age_group', 'sexe', 'csp',
                 'population', 'pct_interet', 'pct_distribution',
                 'nb_adherents', 'cotisation_preferee', 'nb_locations_an',
-                'prix_max_location', 'revenus_cotisations', 'revenus_locations', 'revenus_totaux'
+                'prix_max_location', 'recettes_cotisations', 'recettes_locations', 'recettes_totales'
             ]].copy()
             
             df_export.columns = [
                 'Profil', 'Age', 'Sexe', 'CSP',
                 'Population', 'Interet_%', 'Distribution_%',
                 'Nb_Adherents', 'Cotisation_EUR', 'Locations_An',
-                'Prix_Moyen_EUR', 'Revenus_Cotisations_EUR', 'Revenus_Locations_EUR', 'Revenus_Totaux_EUR'
+                'Prix_Moyen_EUR', 'Recettes_Cotisations_EUR', 'Recettes_Locations_EUR', 'Recettes_Totales_EUR'
             ]
             
             # Ajouter les totaux
@@ -393,9 +393,9 @@ def export_simulation_excel(simulations, output_path):
                 'Cotisation_EUR': df_export['Cotisation_EUR'].mean(),
                 'Locations_An': df_export['Locations_An'].mean(),
                 'Prix_Moyen_EUR': df_export['Prix_Moyen_EUR'].mean(),
-                'Revenus_Cotisations_EUR': df_export['Revenus_Cotisations_EUR'].sum(),
-                'Revenus_Locations_EUR': df_export['Revenus_Locations_EUR'].sum(),
-                'Revenus_Totaux_EUR': df_export['Revenus_Totaux_EUR'].sum()
+                'Recettes_Cotisations_EUR': df_export['Recettes_Cotisations_EUR'].sum(),
+                'Recettes_Locations_EUR': df_export['Recettes_Locations_EUR'].sum(),
+                'Recettes_Totales_EUR': df_export['Recettes_Totales_EUR'].sum()
             }])
             
             df_export = pd.concat([df_export, totals], ignore_index=True)
@@ -473,7 +473,7 @@ def main():
         print(f"  - Cotisation preferee par profil")
         print(f"  - Nombre de locations/an par profil")
         print(f"  - Prix moyen par profil")
-        print(f"  - Revenus detailles (cotisations + locations)")
+        print(f"  - Recettes detailles (cotisations + locations)")
         
         print(f"\n{'='*70}")
         print("POUR CREER VOS PROPRES SIMULATIONS :")

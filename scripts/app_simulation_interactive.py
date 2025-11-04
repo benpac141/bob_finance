@@ -33,7 +33,7 @@ from scripts.budget_simulator_interactive import (
     load_data,
     analyze_profile_behaviors,
     distribute_adherents_by_profile,
-    calculate_revenues_by_profile
+    calculate_recettes_by_profile
 )
 from raking import RakingWeighter
 
@@ -275,10 +275,10 @@ def generate_scenario_pdf(scenario_data, output_path):
     kpis_data = [
         ['Indicateur', 'Valeur'],
         ['Nombre total d\'adhérents', format_nombre(scenario_data['total_adherents'])],
-        ['Revenus cotisations', f"{format_nombre(scenario_data['total_cotisations'])} €"],
-        ['Revenus locations', f"{format_nombre(scenario_data['total_locations'])} €"],
-        ['Revenus totaux', f"{format_nombre(scenario_data['total_revenus'])} €"],
-        ['Revenu moyen par adhérent', f"{format_nombre(scenario_data['revenu_par_adherent'])} €"],
+        ['Recettes cotisations', f"{format_nombre(scenario_data['total_cotisations'])} €"],
+        ['Recettes locations', f"{format_nombre(scenario_data['total_locations'])} €"],
+        ['Recettes totales', f"{format_nombre(scenario_data['total_recettes'])} €"],
+        ['Recette moyenne par adhérent', f"{format_nombre(scenario_data['recette_par_adherent'])} €"],
         ['Cotisation moyenne', f"{format_nombre(scenario_data['cotisation_moyenne'])} €"],
         ['Répartition solidaire', f"{format_nombre(scenario_data['pct_solidaire'], 1)}%"],
         ['Répartition normal', f"{format_nombre(scenario_data['pct_normale'], 1)}%"],
@@ -328,7 +328,7 @@ def generate_scenario_pdf(scenario_data, output_path):
             format_nombre(row.get('nb_adherents', 0)),
             f"{format_nombre(row.get('cotisation_moyenne', 0), 2)} €",
             format_nombre(row.get('nb_locations_an', 0)),
-            f"{format_nombre(row.get('revenus_totaux', 0))} €"
+            f"{format_nombre(row.get('recettes_totales', 0))} €"
         ])
     
     detailed_table = Table(detailed_data, colWidths=[3*cm, 2*cm, 3*cm, 2*cm, 2*cm, 2*cm, 2*cm])
@@ -824,8 +824,8 @@ def main():
         # Distribution des adhérents
         df_dist = distribute_adherents_by_profile(nb_adherents, df_behaviors, margins)
         
-        # Calcul des revenus de base
-        df_result = calculate_revenues_by_profile(df_dist)
+        # Calcul des recettes de base
+        df_result = calculate_recettes_by_profile(df_dist)
         
         # Calculer la répartition des cotisations par type
         df_result = calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation_normale, cotisation_soutien, proportions_par_profil)
@@ -833,14 +833,14 @@ def main():
         # Appliquer le nombre moyen de locations par adhérent (uniforme pour tous)
         df_result['nb_locations_an'] = nb_locations_moyen
         
-        # Recalculer les revenus avec les nouveaux tarifs
-        df_result['revenus_cotisations'] = df_result['nb_adherents'] * df_result['cotisation_moyenne']
-        df_result['revenus_locations'] = (
+        # Recalculer les recettes avec les nouveaux tarifs
+        df_result['recettes_cotisations'] = df_result['nb_adherents'] * df_result['cotisation_moyenne']
+        df_result['recettes_locations'] = (
             df_result['nb_adherents'] * 
             nb_locations_moyen * 
             prix_location
         )
-        df_result['revenus_totaux'] = df_result['revenus_cotisations'] + df_result['revenus_locations']
+        df_result['recettes_totales'] = df_result['recettes_cotisations'] + df_result['recettes_locations']
     
     # Métriques principales
     st.markdown("## 📊 Résultats de la Simulation")
@@ -848,10 +848,10 @@ def main():
     col1, col2, col3, col4 = st.columns(4)
     
     total_adherents = df_result['nb_adherents'].sum()
-    total_cotisations = df_result['revenus_cotisations'].sum()
-    total_locations = df_result['revenus_locations'].sum()
-    total_revenus = df_result['revenus_totaux'].sum()
-    revenu_par_adherent = total_revenus / total_adherents if total_adherents > 0 else 0
+    total_cotisations = df_result['recettes_cotisations'].sum()
+    total_locations = df_result['recettes_locations'].sum()
+    total_recettes = df_result['recettes_totales'].sum()
+    recette_par_adherent = total_recettes / total_adherents if total_adherents > 0 else 0
     
     with col1:
         st.metric(
@@ -876,9 +876,9 @@ def main():
     
     with col4:
         st.metric(
-            "💰 Revenus Totaux",
-            f"{format_nombre(total_revenus)} €",
-            f"{format_nombre(revenu_par_adherent)} €/adhérent"
+            "💰 Recettes Totales",
+            f"{format_nombre(total_recettes)} €",
+            f"{format_nombre(recette_par_adherent)} €/adhérent"
         )
     
     # Répartition des cotisations
@@ -918,8 +918,8 @@ def main():
                             'total_adherents': total_adherents,
                             'total_cotisations': total_cotisations,
                             'total_locations': total_locations,
-                            'total_revenus': total_revenus,
-                            'revenu_par_adherent': revenu_par_adherent,
+                            'total_recettes': total_recettes,
+                            'recette_par_adherent': recette_par_adherent,
                             'cotisation_moyenne': cotisation_moyenne,
                             'pct_solidaire': pct_solidaire,
                             'pct_normale': pct_normale,
@@ -931,20 +931,20 @@ def main():
                         # Générer et exporter les graphiques principaux
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         
-                        # Graphique 1: Répartition des revenus
+                        # Graphique 1: Répartition des recettes
                         try:
-                            fig_revenus = go.Figure(data=[go.Pie(
+                            fig_recettes = go.Figure(data=[go.Pie(
                                 labels=['Cotisations', 'Locations'],
                                 values=[total_cotisations, total_locations],
                                 hole=0.4,
                                 marker=dict(colors=['#1f4788', '#2ecc71'])
                             )])
-                            fig_revenus.update_layout(title="Répartition des Revenus", height=400)
-                            path_revenus = temp_dir / f"repartition_revenus_{timestamp}.png"
-                            if export_plotly_figure(fig_revenus, path_revenus):
-                                scenario_data['graphiques_paths'].append(("Répartition des Revenus", str(path_revenus)))
+                            fig_recettes.update_layout(title="Répartition des Recettes", height=400)
+                            path_recettes = temp_dir / f"repartition_recettes_{timestamp}.png"
+                            if export_plotly_figure(fig_recettes, path_recettes):
+                                scenario_data['graphiques_paths'].append(("Répartition des Recettes", str(path_recettes)))
                         except Exception as e:
-                            st.warning(f"⚠️ Impossible d'exporter le graphique 'Répartition des Revenus' : {e}")
+                            st.warning(f"⚠️ Impossible d'exporter le graphique 'Répartition des Recettes' : {e}")
                         
                         # Graphique 2: Distribution par âge
                         try:
@@ -1046,7 +1046,7 @@ def main():
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Vue d'ensemble", 
         "👥 Profils", 
-        "💰 Revenus", 
+        "💰 Recettes", 
         "📊 Détails",
         "📋 Résultats Enquête"
     ])
@@ -1055,18 +1055,18 @@ def main():
         col1, col2 = st.columns(2)
         
         with col1:
-            # Répartition des revenus
-            fig_revenus = go.Figure(data=[go.Pie(
+            # Répartition des recettes
+            fig_recettes = go.Figure(data=[go.Pie(
                 labels=['Cotisations', 'Locations'],
                 values=[total_cotisations, total_locations],
                 hole=0.4,
                 marker=dict(colors=['#1f4788', '#2ecc71'])
             )])
-            fig_revenus.update_layout(
-                title="Répartition des Revenus",
+            fig_recettes.update_layout(
+                title="Répartition des Recettes",
                 height=400
             )
-            st.plotly_chart(fig_revenus, use_container_width=True)
+            st.plotly_chart(fig_recettes, use_container_width=True)
         
         with col2:
             # Distribution par âge
@@ -1133,8 +1133,8 @@ def main():
     with tab2:
         st.subheader("🏆 Top 10 Profils Contributeurs")
         
-        top10 = df_result.nlargest(10, 'revenus_totaux')[
-            ['profil', 'nb_adherents', 'revenus_cotisations', 'revenus_locations', 'revenus_totaux']
+        top10 = df_result.nlargest(10, 'recettes_totales')[
+            ['profil', 'nb_adherents', 'recettes_cotisations', 'recettes_locations', 'recettes_totales']
         ].copy()
         
         top10.columns = ['Profil', 'Adhérents', 'Cotisations (€)', 'Locations (€)', 'Total (€)']
@@ -1150,7 +1150,7 @@ def main():
             x='Total (€)',
             y='Profil',
             orientation='h',
-            title="Revenus par Profil (Top 10)",
+            title="Recettes par Profil (Top 10)",
             color='Total (€)',
             color_continuous_scale='Viridis'
         )
@@ -1158,51 +1158,51 @@ def main():
         st.plotly_chart(fig_top, use_container_width=True)
     
     with tab3:
-        st.subheader("💰 Analyse des Revenus")
+        st.subheader("💰 Analyse des Recettes")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Revenus par âge
-            revenus_age = df_result.groupby('age_group')['revenus_totaux'].sum().sort_values(ascending=False)
-            fig_rev_age = px.bar(
-                x=revenus_age.index,
-                y=revenus_age.values,
-                title="Revenus par Tranche d'Âge",
-                labels={'x': 'Âge', 'y': 'Revenus (€)'},
-                color=revenus_age.values,
+            # Recettes par âge
+            recettes_age = df_result.groupby('age_group')['recettes_totales'].sum().sort_values(ascending=False)
+            fig_rec_age = px.bar(
+                x=recettes_age.index,
+                y=recettes_age.values,
+                title="Recettes par Tranche d'Âge",
+                labels={'x': 'Âge', 'y': 'Recettes (€)'},
+                color=recettes_age.values,
                 color_continuous_scale='RdYlGn'
             )
-            fig_rev_age.update_layout(showlegend=False)
-            st.plotly_chart(fig_rev_age, use_container_width=True)
+            fig_rec_age.update_layout(showlegend=False)
+            st.plotly_chart(fig_rec_age, use_container_width=True)
         
         with col2:
-            # Revenus par CSP
-            revenus_csp = df_result.groupby('csp')['revenus_totaux'].sum().sort_values(ascending=False)
-            fig_rev_csp = px.bar(
-                x=revenus_csp.index,
-                y=revenus_csp.values,
-                title="Revenus par CSP",
-                labels={'x': 'CSP', 'y': 'Revenus (€)'},
-                color=revenus_csp.values,
+            # Recettes par CSP
+            recettes_csp = df_result.groupby('csp')['recettes_totales'].sum().sort_values(ascending=False)
+            fig_rec_csp = px.bar(
+                x=recettes_csp.index,
+                y=recettes_csp.values,
+                title="Recettes par CSP",
+                labels={'x': 'CSP', 'y': 'Recettes (€)'},
+                color=recettes_csp.values,
                 color_continuous_scale='Blues'
             )
-            fig_rev_csp.update_layout(showlegend=False)
-            st.plotly_chart(fig_rev_csp, use_container_width=True)
+            fig_rec_csp.update_layout(showlegend=False)
+            st.plotly_chart(fig_rec_csp, use_container_width=True)
         
-        # Heatmap revenus par âge et sexe
-        pivot_revenus = df_result.pivot_table(
-            values='revenus_totaux',
+        # Heatmap recettes par âge et sexe
+        pivot_recettes = df_result.pivot_table(
+            values='recettes_totales',
             index='age_group',
             columns='sexe',
             aggfunc='sum'
         )
-        pivot_revenus.columns = ['Femmes', 'Hommes']
+        pivot_recettes.columns = ['Femmes', 'Hommes']
         
         fig_heatmap = px.imshow(
-            pivot_revenus,
-            title="Heatmap des Revenus (Âge × Sexe)",
-            labels=dict(x="Sexe", y="Âge", color="Revenus (€)"),
+            pivot_recettes,
+            title="Heatmap des Recettes (Âge × Sexe)",
+            labels=dict(x="Sexe", y="Âge", color="Recettes (€)"),
             color_continuous_scale='YlOrRd',
             aspect='auto'
         )
@@ -1217,7 +1217,7 @@ def main():
             'population', 'pct_interet', 'nb_adherents',
             'nb_solidaire', 'nb_normale', 'nb_soutien', 'cotisation_moyenne',
             'nb_locations_an',
-            'revenus_cotisations', 'revenus_locations', 'revenus_totaux'
+            'recettes_cotisations', 'recettes_locations', 'recettes_totales'
         ]].copy()
         
         df_export.columns = [
@@ -1225,11 +1225,11 @@ def main():
             'Population', 'Intérêt (%)', 'Adhérents',
             'Nb Solidaire', 'Nb Normal', 'Nb Soutien', 'Cotis. Moy. (€)',
             'Locations/an',
-            'Rev. Cotisations (€)', 'Rev. Locations (€)', 'Rev. Totaux (€)'
+            'Rec. Cotisations (€)', 'Rec. Locations (€)', 'Rec. Totales (€)'
         ]
         
         # Arrondir
-        for col in ['Cotis. Moy. (€)', 'Rev. Cotisations (€)', 'Rev. Locations (€)', 'Rev. Totaux (€)']:
+        for col in ['Cotis. Moy. (€)', 'Rec. Cotisations (€)', 'Rec. Locations (€)', 'Rec. Totales (€)']:
             df_export[col] = df_export[col].round(0).astype(int)
         
         for col in ['Nb Solidaire', 'Nb Normal', 'Nb Soutien']:
@@ -1270,7 +1270,7 @@ def main():
         ]
         
         st.dataframe(
-            df_filtered.sort_values('Rev. Totaux (€)', ascending=False),
+            df_filtered.sort_values('Rec. Totales (€)', ascending=False),
             use_container_width=True,
             hide_index=True
         )
