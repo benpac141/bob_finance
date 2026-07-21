@@ -1,8 +1,8 @@
 [theme]
-primaryColor = "#1f4788"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
+primaryColor = "#14635C"
+backgroundColor = "#F3F6F5"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#334155"
 font = "sans serif"
 
 [browser]
@@ -18,5 +18,3 @@ enableXsrfProtection = true
 magicEnabled = true
 installTracer = false
 fastReruns = true
-
-
