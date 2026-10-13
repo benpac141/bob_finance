@@ -134,9 +134,31 @@ section[data-testid="stSidebar"] .stSlider > div > div > div {{
     background: rgba(255,255,255,0.25);
 }}
 
+/* Champs numériques : fond blanc, chiffres noirs (lisibles dans la barre latérale) */
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] [data-baseweb="input"],
 section[data-testid="stSidebar"] [data-baseweb="input"] {{
-    background: rgba(255,255,255,0.08) !important;
+    background: #FFFFFF !important;
     border-radius: 10px !important;
+    border: 1px solid rgba(11, 46, 44, 0.12) !important;
+}}
+
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] input,
+section[data-testid="stSidebar"] [data-baseweb="input"] input,
+section[data-testid="stSidebar"] input {{
+    color: #111111 !important;
+    -webkit-text-fill-color: #111111 !important;
+    caret-color: #111111 !important;
+    background-color: #FFFFFF !important;
+}}
+
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] button {{
+    background: #F4F7F6 !important;
+    color: #111111 !important;
+    border-color: rgba(11, 46, 44, 0.12) !important;
+}}
+
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] button svg {{
+    fill: #111111 !important;
 }}
 
 section[data-testid="stSidebar"] button {{
@@ -467,6 +489,48 @@ header[data-testid="stHeader"] {{
     color: rgba(234,246,243,0.72) !important;
     line-height: 1.35;
 }}
+
+.bob-status {{
+    border-radius: 14px;
+    padding: 0.95rem 1.15rem;
+    margin: 0.15rem 0 1.05rem;
+    background: rgba(255,255,255,0.9);
+    border: 1px solid var(--bob-line);
+    box-shadow: 0 8px 22px rgba(11,46,44,0.05);
+}}
+
+.bob-status.ok {{
+    border-left: 5px solid {COLORS["success"]};
+}}
+
+.bob-status.alert {{
+    border-left: 5px solid {COLORS["danger"]};
+}}
+
+.bob-status strong {{
+    display: block;
+    font-family: "Fraunces", serif;
+    font-size: 1.15rem;
+    color: var(--bob-ink);
+    margin-bottom: 0.25rem;
+}}
+
+.bob-status p {{
+    margin: 0;
+    color: var(--bob-slate);
+    line-height: 1.45;
+}}
+"""
+
+
+def render_status_banner(tone: str, title: str, message: str) -> str:
+    """Encart de lecture : équilibre ou déficit du scénario."""
+    klass = "ok" if tone == "ok" else "alert"
+    return f"""
+<div class="bob-status {klass}">
+  <strong>{title}</strong>
+  <p>{message}</p>
+</div>
 """
 
 
