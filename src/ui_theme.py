@@ -172,6 +172,13 @@ section[data-testid="stSidebar"] button:hover {{
     background: rgba(255,255,255,0.20) !important;
 }}
 
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] button,
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] button * {{
+    color: #111111 !important;
+    -webkit-text-fill-color: #111111 !important;
+    fill: #111111 !important;
+}}
+
 /* Brand header */
 .bob-hero {{
     position: relative;
