@@ -795,8 +795,8 @@ def main():
     nb_adherents = st.sidebar.slider(
         "Nombre d'adhérents cible",
         min_value=10,
-        max_value=1500,
-        value=1000,
+        max_value=500,
+        value=80,
         step=10,
         help="Ajustez le nombre d'adhérents souhaité"
     )
@@ -859,7 +859,7 @@ def main():
         "Nombre moyen de locations par adhérent/an",
         min_value=1,
         max_value=50,
-        value=10,
+        value=2,
         step=1,
         help="Nombre moyen de locations par adhérent et par an"
     )
