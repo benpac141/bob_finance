@@ -239,6 +239,7 @@ def generate_scenario_pdf(scenario_data, output_path):
         ['Prix location moyen', f"{scenario_data['prix_location']} €/jour"],
         ['Nombre locations/an/adhérent', format_nombre(scenario_data['nb_locations_moyen'])],
         ['Dépense moyenne mensuelle', f"{format_nombre(scenario_data.get('depense_mensuelle', 0))} €"],
+        ['Tarif solidaire sur justificatif', 'Oui' if scenario_data.get('mode_justificatif') else 'Non'],
     ]
     
     hypotheses_table = Table(hypotheses_data, colWidths=[8*cm, 8*cm])
@@ -610,7 +611,58 @@ def attribuer_type_cotisation(age_group, csp):
     return 'normale'
 
 
-def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation_normale, cotisation_soutien, proportions_par_profil):
+CSP_ELIGIBLES_JUSTIFICATIF = {'Etudiants/Chomeurs'}
+
+
+def normaliser_csp(csp):
+    """Aligne les libellés de CSP utilisés dans les profils et dans les données."""
+    if csp is None:
+        return None
+    aliases = {
+        'Retraites': 'Retraites/Inactifs',
+        'Retraités': 'Retraites/Inactifs',
+        'Retraites/Inactifs': 'Retraites/Inactifs',
+        'Étudiants/Chômeurs': 'Etudiants/Chomeurs',
+        'Etudiants/Chomeurs': 'Etudiants/Chomeurs',
+    }
+    return aliases.get(csp, csp)
+
+
+def restreindre_solidaire_justificatif(proportions, csp):
+    """
+    Réserve le tarif solidaire aux publics avec justificatif.
+
+    Étudiants, demandeurs d'emploi, minimas sociaux et allocataires AAH
+    sont modélisés par la catégorie Étudiants/Chômeurs. Les autres classes
+    conservent la part relative entre tarif normal et soutien.
+    """
+    proportions = dict(proportions)
+    if normaliser_csp(csp) in CSP_ELIGIBLES_JUSTIFICATIF:
+        return proportions
+
+    normale = float(proportions.get('normale', 0))
+    soutien = float(proportions.get('soutien', 0))
+    reste = normale + soutien
+    if reste <= 0:
+        normale_part, soutien_part = 1.0, 0.0
+    else:
+        normale_part = normale / reste
+        soutien_part = soutien / reste
+
+    proportions['solidaire'] = 0.0
+    proportions['normale'] = normale_part
+    proportions['soutien'] = soutien_part
+    return proportions
+
+
+def calculer_repartition_cotisations(
+    df_result,
+    cotisation_solidaire,
+    cotisation_normale,
+    cotisation_soutien,
+    proportions_par_profil,
+    mode_justificatif=False,
+):
     """
     Calcule la répartition des cotisations par type pour chaque profil.
     
@@ -633,7 +685,7 @@ def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation
             if nom_profil == 'Autres profils':
                 continue
             age_match = config['age_group'] is None or config['age_group'] == age_group
-            csp_match = config['csp'] is None or config['csp'] == csp
+            csp_match = config['csp'] is None or normaliser_csp(config['csp']) == normaliser_csp(csp)
             
             # Si les deux correspondent, utiliser ce profil
             if age_match and csp_match:
@@ -646,7 +698,7 @@ def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation
             if nom_profil == 'Autres profils':
                 continue
             age_match = config['age_group'] is None or config['age_group'] == age_group
-            csp_match = config['csp'] is None or config['csp'] == csp
+            csp_match = config['csp'] is None or normaliser_csp(config['csp']) == normaliser_csp(csp)
             
             if age_match and csp_match:
                 return config
@@ -665,6 +717,8 @@ def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation
         
         # Trouver les proportions pour ce profil
         proportions = trouver_profil(age_group, csp)
+        if mode_justificatif:
+            proportions = restreindre_solidaire_justificatif(proportions, csp)
         
         # Calculer la répartition
         nb_solidaire = int(nb_adherents * proportions['solidaire'])
@@ -800,6 +854,21 @@ def main():
     )
     
     st.sidebar.markdown("---")
+    st.sidebar.markdown("##### Règle du tarif solidaire")
+    mode_justificatif = st.sidebar.checkbox(
+        "Tarif réduit uniquement sur justificatif",
+        value=False,
+        help="Réserve le tarif solidaire aux étudiant·es, minimas sociaux, "
+             "demandeur·euses d'emploi et allocataires adultes handicapés."
+    )
+    if mode_justificatif:
+        st.sidebar.caption(
+            "Le tarif solidaire ne s'applique qu'à la catégorie Étudiants/Chômeurs "
+            "(étudiant·es, demandeur·euses d'emploi, minimas sociaux, AAH). "
+            "Les autres classes gardent la part de base entre tarif normal et tarif soutien."
+        )
+    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("##### Répartition des tarifs par profil")
     
     st.sidebar.markdown("""
@@ -853,21 +922,21 @@ def main():
         },
         'Retraités (55-64)': {
             'age_group': '55-64',
-            'csp': 'Retraites',
+            'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
             'default_normale': 60,
             'default_soutien': 30
         },
         'Retraités (65+)': {
             'age_group': '65+',
-            'csp': 'Retraites',
+            'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
             'default_normale': 60,
             'default_soutien': 30
         },
         'Retraités (autres)': {
             'age_group': None,
-            'csp': 'Retraites',
+            'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
             'default_normale': 60,
             'default_soutien': 30
@@ -950,7 +1019,14 @@ def main():
         df_result = calculate_recettes_by_profile(df_dist)
         
         # Calculer la répartition des cotisations par type
-        df_result = calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation_normale, cotisation_soutien, proportions_par_profil)
+        df_result = calculer_repartition_cotisations(
+            df_result,
+            cotisation_solidaire,
+            cotisation_normale,
+            cotisation_soutien,
+            proportions_par_profil,
+            mode_justificatif=mode_justificatif,
+        )
         
         # Appliquer le nombre moyen de locations par adhérent (uniforme pour tous)
         df_result['nb_locations_an'] = nb_locations_moyen
@@ -1210,6 +1286,7 @@ def main():
                             'cotisation_soutien': cotisation_soutien,
                             'prix_location': prix_location,
                             'nb_locations_moyen': nb_locations_moyen,
+                            'mode_justificatif': mode_justificatif,
                             'proportions_par_profil': proportions_par_profil,
                             'total_adherents': total_adherents,
                             'total_cotisations': total_cotisations,
@@ -1321,10 +1398,23 @@ def main():
     st.markdown(
         render_section(
             "Répartition des cotisations",
-            "Structure tarifaire du scénario sélectionné.",
+            "Tarif réduit réservé aux publics avec justificatif (étudiant·es, minimas sociaux, demandeur·euses d'emploi, AAH). Les autres classes conservent la part normal / soutien."
+            if mode_justificatif
+            else "Structure tarifaire du scénario sélectionné.",
         ),
         unsafe_allow_html=True,
     )
+    if mode_justificatif:
+        st.markdown(
+            render_status_banner(
+                "ok",
+                "Mode justificatif actif",
+                "Le tarif solidaire est limité à la catégorie Étudiants/Chômeurs. "
+                "Actifs et retraités sont répartis entre tarif normal et tarif soutien, "
+                "selon les hypothèses de base.",
+            ),
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         render_tariff_grid([
