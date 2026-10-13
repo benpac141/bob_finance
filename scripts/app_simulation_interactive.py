@@ -45,6 +45,7 @@ from ui_theme import (
     render_hero,
     render_section,
     render_kpi_grid,
+    render_status_banner,
     render_tariff_grid,
 )
 
@@ -223,6 +224,7 @@ def generate_scenario_pdf(scenario_data, output_path):
         ['Tarif Soutien', f"{scenario_data['cotisation_soutien']} €"],
         ['Prix location moyen', f"{scenario_data['prix_location']} €/jour"],
         ['Nombre locations/an/adhérent', format_nombre(scenario_data['nb_locations_moyen'])],
+        ['Dépense moyenne mensuelle', f"{format_nombre(scenario_data.get('depense_mensuelle', 0))} €"],
     ]
     
     hypotheses_table = Table(hypotheses_data, colWidths=[8*cm, 8*cm])
@@ -280,6 +282,13 @@ def generate_scenario_pdf(scenario_data, output_path):
         ['Recettes totales', f"{format_nombre(scenario_data['total_recettes'])} €"],
         ['Recette moyenne par adhérent', f"{format_nombre(scenario_data['recette_par_adherent'])} €"],
         ['Cotisation moyenne', f"{format_nombre(scenario_data['cotisation_moyenne'])} €"],
+        ['Dépense moyenne mensuelle', f"{format_nombre(scenario_data.get('depense_mensuelle', 0))} €"],
+        ['Charges annuelles', f"{format_nombre(scenario_data.get('depenses_annuelles', 0))} €"],
+        ['Recettes mensuelles', f"{format_nombre(scenario_data.get('recettes_mensuelles', 0))} €"],
+        ['Résultat mensuel', f"{format_nombre(scenario_data.get('resultat_mensuel', 0))} €"],
+        ['Résultat annuel', f"{format_nombre(scenario_data.get('resultat_annuel', 0))} €"],
+        ['Taux de couverture des charges', f"{format_nombre(scenario_data.get('taux_couverture') or 0, 1)}%"],
+        ['Seuil de rentabilité (adhérents)', format_nombre(scenario_data.get('seuil_adherents') or 0)],
         ['Répartition solidaire', f"{format_nombre(scenario_data['pct_solidaire'], 1)}%"],
         ['Répartition normal', f"{format_nombre(scenario_data['pct_normale'], 1)}%"],
         ['Répartition soutien', f"{format_nombre(scenario_data['pct_soutien'], 1)}%"],
@@ -366,9 +375,109 @@ def format_nombre(nombre, decimals=0):
         return "N/A"
     
     if decimals == 0:
-        return f"{int(nombre):d}"
+        return f"{int(round(nombre)):d}"
     else:
         return f"{nombre:.{decimals}f}".replace('.', ',')
+
+
+def evaluer_equilibre(
+    total_recettes,
+    total_cotisations,
+    total_locations,
+    total_adherents,
+    depense_mensuelle,
+    nb_locations_moyen,
+):
+    """
+    Met les recettes du scénario en regard d'une dépense mensuelle moyenne.
+
+    Le seuil d'adhérents suppose que la recette par adhérent reste celle du
+    scénario actuel (même mix tarifaire et même fréquence de location).
+    """
+    total_recettes = float(total_recettes)
+    total_cotisations = float(total_cotisations)
+    total_locations = float(total_locations)
+    total_adherents = float(total_adherents)
+    depense_mensuelle = float(depense_mensuelle)
+    nb_locations_moyen = float(nb_locations_moyen)
+
+    recettes_mensuelles = total_recettes / 12.0
+    depenses_annuelles = depense_mensuelle * 12.0
+    resultat_mensuel = recettes_mensuelles - depense_mensuelle
+    resultat_annuel = total_recettes - depenses_annuelles
+    recette_par_adherent = total_recettes / total_adherents if total_adherents else 0.0
+    cout_par_adherent = depenses_annuelles / total_adherents if total_adherents else 0.0
+
+    if recette_par_adherent > 0:
+        seuil_adherents = int(np.ceil(depenses_annuelles / recette_par_adherent - 1e-9))
+        ecart_adherents = int(round(total_adherents - seuil_adherents))
+    else:
+        seuil_adherents = None
+        ecart_adherents = None
+
+    taux_couverture = (
+        total_recettes / depenses_annuelles * 100 if depenses_annuelles > 0 else None
+    )
+    marge_nette = resultat_annuel / total_recettes * 100 if total_recettes else None
+    couverture_cotisations = (
+        total_cotisations / depenses_annuelles * 100 if depenses_annuelles > 0 else None
+    )
+    couverture_locations = (
+        total_locations / depenses_annuelles * 100 if depenses_annuelles > 0 else None
+    )
+
+    besoin_annuel = max(0.0, depenses_annuelles - total_recettes)
+    hausse_cotisation = besoin_annuel / total_adherents if total_adherents else None
+    locations_totales = total_adherents * nb_locations_moyen
+    hausse_prix_location = besoin_annuel / locations_totales if locations_totales else None
+
+    return {
+        "recettes_mensuelles": recettes_mensuelles,
+        "depense_mensuelle": depense_mensuelle,
+        "depenses_annuelles": depenses_annuelles,
+        "resultat_mensuel": resultat_mensuel,
+        "resultat_annuel": resultat_annuel,
+        "recette_par_adherent": recette_par_adherent,
+        "cout_par_adherent": cout_par_adherent,
+        "seuil_adherents": seuil_adherents,
+        "ecart_adherents": ecart_adherents,
+        "taux_couverture": taux_couverture,
+        "marge_nette": marge_nette,
+        "couverture_cotisations": couverture_cotisations,
+        "couverture_locations": couverture_locations,
+        "besoin_annuel": besoin_annuel,
+        "hausse_cotisation": hausse_cotisation,
+        "hausse_prix_location": hausse_prix_location,
+        "equilibre": resultat_annuel >= -0.5,
+    }
+
+
+def tableau_sensibilite_charges(total_recettes, total_cotisations, total_locations, total_adherents, nb_locations_moyen, depense_courante):
+    """Quelques niveaux de charges pour situer le scénario."""
+    niveaux = [50, 150, 300, 500, 1000, 2000, 5000]
+    if int(depense_courante) not in niveaux:
+        niveaux.append(int(round(depense_courante)))
+        niveaux = sorted(set(niveaux))
+
+    lignes = []
+    for niveau in niveaux:
+        eq = evaluer_equilibre(
+            total_recettes,
+            total_cotisations,
+            total_locations,
+            total_adherents,
+            niveau,
+            nb_locations_moyen,
+        )
+        lignes.append({
+            "Dépense mensuelle (€)": niveau,
+            "Charges annuelles (€)": int(round(eq["depenses_annuelles"])),
+            "Résultat annuel (€)": int(round(eq["resultat_annuel"])),
+            "Couverture (%)": None if eq["taux_couverture"] is None else round(eq["taux_couverture"], 1),
+            "Seuil d'adhérents": eq["seuil_adherents"] if eq["seuil_adherents"] is not None else "—",
+            "Scénario": "Actuel" if niveau == int(round(depense_courante)) else "",
+        })
+    return pd.DataFrame(lignes)
 
 # Configuration de la page
 st.set_page_config(
@@ -665,6 +774,18 @@ def main():
     )
     
     st.sidebar.markdown("---")
+    st.sidebar.markdown("##### Charges de fonctionnement")
+    depense_mensuelle = st.sidebar.number_input(
+        "Dépense moyenne mensuelle (€)",
+        min_value=0.0,
+        max_value=50000.0,
+        value=150.0,
+        step=10.0,
+        help="Charges moyennes de la structure chaque mois (local, assurance, fonctionnement). "
+             "Les recettes du scénario sont comparées à cette dépense. Valeur de départ : 150 €."
+    )
+    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("##### Répartition des tarifs par profil")
     
     st.sidebar.markdown("""
@@ -873,6 +994,174 @@ def main():
         ]),
         unsafe_allow_html=True,
     )
+
+    equilibre = evaluer_equilibre(
+        total_recettes,
+        total_cotisations,
+        total_locations,
+        total_adherents,
+        depense_mensuelle,
+        nb_locations_moyen,
+    )
+
+    st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
+    st.markdown(
+        render_section(
+            "Recettes face aux charges",
+            "La dépense moyenne mensuelle se règle dans la barre latérale (150 € par défaut).",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    if equilibre["equilibre"]:
+        titre_eq = f"Excédent de {format_nombre(equilibre['resultat_mensuel'])} € par mois"
+        message_eq = (
+            f"Les recettes mensuelles ({format_nombre(equilibre['recettes_mensuelles'])} €) "
+            f"couvrent la dépense de {format_nombre(equilibre['depense_mensuelle'])} €. "
+            f"Sur l'année, l'excédent est de {format_nombre(equilibre['resultat_annuel'])} €. "
+            f"Les charges peuvent encore monter de {format_nombre(equilibre['resultat_mensuel'])} € / mois "
+            f"avant le point mort."
+        )
+        ton_eq = "ok"
+        accent_resultat = COLORS["success"]
+    else:
+        titre_eq = f"Déficit de {format_nombre(abs(equilibre['resultat_mensuel']))} € par mois"
+        message_eq = (
+            f"Les recettes mensuelles ({format_nombre(equilibre['recettes_mensuelles'])} €) "
+            f"ne couvrent pas la dépense de {format_nombre(equilibre['depense_mensuelle'])} €. "
+            f"Il manque {format_nombre(equilibre['besoin_annuel'])} € sur l'année."
+        )
+        ton_eq = "alert"
+        accent_resultat = COLORS["danger"]
+
+    st.markdown(render_status_banner(ton_eq, titre_eq, message_eq), unsafe_allow_html=True)
+
+    couverture_label = (
+        f"{format_nombre(equilibre['taux_couverture'], 1)} %"
+        if equilibre["taux_couverture"] is not None
+        else "—"
+    )
+    st.markdown(
+        render_kpi_grid([
+            {
+                "label": "Recettes / mois",
+                "value": f"{format_nombre(equilibre['recettes_mensuelles'])} €",
+                "delta": f"{format_nombre(total_recettes)} € sur l'année",
+                "accent": COLORS["primary"],
+            },
+            {
+                "label": "Dépense / mois",
+                "value": f"{format_nombre(equilibre['depense_mensuelle'])} €",
+                "delta": f"{format_nombre(equilibre['depenses_annuelles'])} € de charges / an",
+                "accent": COLORS["accent"],
+            },
+            {
+                "label": "Résultat / mois",
+                "value": f"{format_nombre(equilibre['resultat_mensuel'])} €",
+                "delta": f"{format_nombre(equilibre['resultat_annuel'])} € sur l'année",
+                "accent": accent_resultat,
+            },
+            {
+                "label": "Couverture des charges",
+                "value": couverture_label,
+                "delta": "100 % = point mort",
+                "accent": COLORS["sage"],
+            },
+        ]),
+        unsafe_allow_html=True,
+    )
+
+    col_eq1, col_eq2 = st.columns([1.15, 0.85])
+    with col_eq1:
+        fig_eq = go.Figure()
+        fig_eq.add_trace(go.Bar(
+            name="Cotisations",
+            x=["Recettes mensuelles", "Dépense mensuelle"],
+            y=[total_cotisations / 12, 0],
+            marker_color=COLORS["cotisations"],
+        ))
+        fig_eq.add_trace(go.Bar(
+            name="Locations",
+            x=["Recettes mensuelles", "Dépense mensuelle"],
+            y=[total_locations / 12, 0],
+            marker_color=COLORS["locations"],
+        ))
+        fig_eq.add_trace(go.Bar(
+            name="Charges",
+            x=["Recettes mensuelles", "Dépense mensuelle"],
+            y=[0, depense_mensuelle],
+            marker_color=COLORS["accent"],
+        ))
+        apply_plotly_theme(
+            fig_eq,
+            title="Recettes mensuelles et dépense moyenne",
+            height=380,
+            barmode="stack",
+            yaxis_title="Euros / mois",
+        )
+        st.plotly_chart(fig_eq, use_container_width=True)
+
+    with col_eq2:
+        seuil_txt = (
+            format_nombre(equilibre["seuil_adherents"])
+            if equilibre["seuil_adherents"] is not None
+            else "—"
+        )
+        if equilibre["ecart_adherents"] is None:
+            ecart_txt = "La recette par adhérent est nulle : le seuil ne peut pas être calculé."
+        elif equilibre["ecart_adherents"] >= 0:
+            ecart_txt = (
+                f"{format_nombre(equilibre['ecart_adherents'])} adhérents au-dessus du seuil."
+            )
+        else:
+            ecart_txt = (
+                f"{format_nombre(abs(equilibre['ecart_adherents']))} adhérents manquent pour couvrir les charges."
+            )
+
+        cotis_couv = equilibre["couverture_cotisations"]
+        loc_couv = equilibre["couverture_locations"]
+        lecture = [
+            f"**Seuil de rentabilité** : {seuil_txt} adhérents, à recette constante "
+            f"({format_nombre(equilibre['recette_par_adherent'])} € / adhérent / an).",
+            ecart_txt,
+            f"**Coût des charges** : {format_nombre(equilibre['cout_par_adherent'])} € / adhérent / an, "
+            f"contre {format_nombre(equilibre['recette_par_adherent'])} € de recette.",
+        ]
+        if cotis_couv is not None:
+            lecture.append(
+                f"Les cotisations couvrent **{format_nombre(cotis_couv, 1)} %** des charges, "
+                f"les locations **{format_nombre(loc_couv, 1)} %**."
+            )
+        if not equilibre["equilibre"]:
+            if equilibre["hausse_cotisation"] is not None:
+                lecture.append(
+                    f"Pour revenir à l'équilibre sans changer le nombre d'adhérents : "
+                    f"+{format_nombre(equilibre['hausse_cotisation'], 2)} € de cotisation moyenne / an, "
+                    f"ou +{format_nombre(equilibre['hausse_prix_location'], 2)} € sur le prix de location."
+                )
+        else:
+            lecture.append(
+                "Le scénario finance le fonctionnement. Le levier utile est d'éprouver "
+                "une dépense mensuelle plus haute, ou un nombre d'adhérents plus bas."
+            )
+        st.markdown("##### Lecture opérationnelle")
+        for ligne in lecture:
+            st.markdown(f"- {ligne}")
+
+    st.markdown("##### Sensibilité aux charges")
+    st.caption(
+        "Même scénario d'adhérents et de tarifs, avec plusieurs niveaux de dépense mensuelle. "
+        "La ligne « Actuel » correspond au montant saisi dans la barre latérale."
+    )
+    df_sens = tableau_sensibilite_charges(
+        total_recettes,
+        total_cotisations,
+        total_locations,
+        total_adherents,
+        nb_locations_moyen,
+        depense_mensuelle,
+    )
+    st.dataframe(df_sens, use_container_width=True, hide_index=True)
     
     # Répartition des cotisations
     st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
@@ -914,6 +1203,13 @@ def main():
                             'total_recettes': total_recettes,
                             'recette_par_adherent': recette_par_adherent,
                             'cotisation_moyenne': cotisation_moyenne,
+                            'depense_mensuelle': depense_mensuelle,
+                            'depenses_annuelles': equilibre['depenses_annuelles'],
+                            'recettes_mensuelles': equilibre['recettes_mensuelles'],
+                            'resultat_mensuel': equilibre['resultat_mensuel'],
+                            'resultat_annuel': equilibre['resultat_annuel'],
+                            'taux_couverture': equilibre['taux_couverture'],
+                            'seuil_adherents': equilibre['seuil_adherents'],
                             'pct_solidaire': pct_solidaire,
                             'pct_normale': pct_normale,
                             'pct_soutien': pct_soutien,
