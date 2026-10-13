@@ -655,6 +655,22 @@ def restreindre_solidaire_justificatif(proportions, csp):
     return proportions
 
 
+def repartir_parts_sans_solidaire(normale, soutien):
+    """Ramène normal et soutien à 100 % en gardant leur part relative."""
+    normale = int(normale)
+    soutien = int(soutien)
+    reste = normale + soutien
+    if reste <= 0:
+        return 100, 0
+    normale_new = int(round(normale / reste * 100))
+    normale_new = min(100, max(0, normale_new))
+    return normale_new, 100 - normale_new
+
+
+def profil_eligible_justificatif(config):
+    return normaliser_csp(config.get('csp')) in CSP_ELIGIBLES_JUSTIFICATIF
+
+
 def calculer_repartition_cotisations(
     df_result,
     cotisation_solidaire,
@@ -680,6 +696,13 @@ def calculer_repartition_cotisations(
     
     def trouver_profil(age_group, csp):
         """Trouve le profil correspondant dans proportions_par_profil."""
+        # En mode justificatif, les publics éligibles suivent toujours
+        # la grille Étudiants/Chômeurs, pas le profil d'âge plus large.
+        if mode_justificatif and normaliser_csp(csp) in CSP_ELIGIBLES_JUSTIFICATIF:
+            for config in proportions_par_profil.values():
+                if profil_eligible_justificatif(config):
+                    return config
+
         # Chercher d'abord les correspondances exactes (âge ET CSP)
         for nom_profil, config in proportions_par_profil.items():
             if nom_profil == 'Autres profils':
@@ -863,9 +886,9 @@ def main():
     )
     if mode_justificatif:
         st.sidebar.caption(
-            "Le tarif solidaire ne s'applique qu'à la catégorie Étudiants/Chômeurs "
-            "(étudiant·es, demandeur·euses d'emploi, minimas sociaux, AAH). "
-            "Les autres classes gardent la part de base entre tarif normal et tarif soutien."
+            "Le tarif solidaire est réservé aux étudiant·es, minimas sociaux, "
+            "demandeur·euses d'emploi et allocataires AAH (catégorie Étudiants/Chômeurs). "
+            "Les autres catégories ne peuvent pas le choisir : seuls les tarifs normal et soutien restent réglables."
         )
     
     st.sidebar.markdown("---")
@@ -952,17 +975,42 @@ def main():
     
     # Stocker les proportions dans un dictionnaire
     proportions_par_profil = {}
+
+    if mode_justificatif and not st.session_state.get("_justificatif_sliders_verrouilles"):
+        for nom_profil, config in profils_disponibles.items():
+            if profil_eligible_justificatif(config):
+                continue
+            normale = st.session_state.get(f"normale_{nom_profil}", config['default_normale'])
+            soutien = st.session_state.get(f"soutien_{nom_profil}", config['default_soutien'])
+            normale_new, soutien_new = repartir_parts_sans_solidaire(normale, soutien)
+            st.session_state[f"solidaire_{nom_profil}"] = 0
+            st.session_state[f"normale_{nom_profil}"] = normale_new
+            st.session_state[f"soutien_{nom_profil}"] = soutien_new
+        st.session_state["_justificatif_sliders_verrouilles"] = True
+    elif not mode_justificatif and st.session_state.get("_justificatif_sliders_verrouilles"):
+        for nom_profil, config in profils_disponibles.items():
+            if profil_eligible_justificatif(config):
+                continue
+            st.session_state[f"solidaire_{nom_profil}"] = config['default_solidaire']
+        st.session_state["_justificatif_sliders_verrouilles"] = False
     
     for nom_profil, config in profils_disponibles.items():
+        eligible = profil_eligible_justificatif(config)
+        solidaire_verrouille = mode_justificatif and not eligible
         with st.sidebar.expander(f"📋 {nom_profil}", expanded=False):
+            if solidaire_verrouille:
+                st.caption("Tarif solidaire indisponible pour cette catégorie.")
             solidaire = st.slider(
                 f"Solidaire (%)",
                 min_value=0,
                 max_value=100,
-                value=config['default_solidaire'],
+                value=0 if solidaire_verrouille else config['default_solidaire'],
                 step=5,
-                key=f"solidaire_{nom_profil}"
+                key=f"solidaire_{nom_profil}",
+                disabled=solidaire_verrouille,
             )
+            if solidaire_verrouille:
+                solidaire = 0
             
             normale = st.slider(
                 f"Normal (%)",
@@ -1410,8 +1458,8 @@ def main():
                 "ok",
                 "Mode justificatif actif",
                 "Le tarif solidaire est limité à la catégorie Étudiants/Chômeurs. "
-                "Actifs et retraités sont répartis entre tarif normal et tarif soutien, "
-                "selon les hypothèses de base.",
+                "Les autres catégories ne peuvent pas le choisir : elles restent sur "
+                "les tarifs normal et soutien, selon les hypothèses de base.",
             ),
             unsafe_allow_html=True,
         )
