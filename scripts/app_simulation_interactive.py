@@ -36,6 +36,17 @@ from scripts.budget_simulator_interactive import (
     calculate_recettes_by_profile
 )
 from raking import RakingWeighter
+from ui_theme import (
+    COLORS,
+    PALETTE,
+    SCALE_TEAL,
+    apply_theme_css,
+    apply_plotly_theme,
+    render_hero,
+    render_section,
+    render_kpi_grid,
+    render_tariff_grid,
+)
 
 # Imports pour PDF
 try:
@@ -65,40 +76,29 @@ def get_distinct_colors(labels, color_scheme='default'):
     Returns:
         Liste de couleurs hexadécimales
     """
-    # Palette de couleurs distinctes (10 couleurs)
-    palette_default = [
-        '#1f4788',  # Bleu foncé
-        '#2ecc71',  # Vert
-        '#e74c3c',  # Rouge
-        '#f39c12',  # Orange
-        '#9b59b6',  # Violet
-        '#3498db',  # Bleu clair
-        '#e67e22',  # Orange foncé
-        '#16a085',  # Vert turquoise
-        '#c0392b',  # Rouge foncé
-        '#34495e'   # Gris bleu
-    ]
+    # Palette de couleurs distinctes (thème BOB)
+    palette_default = list(PALETTE)
     
     # Palette pour positive/negative (vert = positif, rouge = négatif, orange = neutre)
     # Ordre de priorité : chercher d'abord les correspondances spécifiques
     palette_positive_negative = {
-        # Catégories négatives (rouge)
-        'non, je ne souhaiterai pas': '#e74c3c',  # Rouge
-        'non, je ne souhaiterais pas': '#e74c3c',  # Rouge
-        'non': '#c0392b',  # Rouge foncé
+        # Catégories négatives
+        'non, je ne souhaiterai pas': COLORS['danger'],
+        'non, je ne souhaiterais pas': COLORS['danger'],
+        'non': COLORS['female'],
         
-        # Catégories positives avec montants (nuances de vert)
-        'oui, entre 20€ et 30€': '#16a085',  # Vert turquoise
-        'oui, entre 10€ et 20€': '#27ae60',  # Vert moyen
-        'oui, entre 1€ et 10€': '#2ecc71',  # Vert clair
-        'oui, entre': '#2ecc71',  # Vert par défaut pour les montants
+        # Catégories positives avec montants
+        'oui, entre 20€ et 30€': COLORS['ink'],
+        'oui, entre 10€ et 20€': COLORS['primary'],
+        'oui, entre 1€ et 10€': COLORS['sage'],
+        'oui, entre': COLORS['sage'],
         
         # Catégories neutres/intermédiaires
-        'peut-être': '#f39c12',  # Orange
-        'peut être': '#f39c12',  # Orange (variante)
+        'peut-être': COLORS['accent'],
+        'peut être': COLORS['accent'],
         
         # Catégories positives simples
-        'oui': '#2ecc71',  # Vert
+        'oui': COLORS['success'],
     }
     
     colors = []
@@ -196,7 +196,7 @@ def generate_scenario_pdf(scenario_data, output_path):
         'CustomTitle',
         parent=styles['Heading1'],
         fontSize=20,
-        textColor=colors.HexColor('#1f4788'),
+        textColor=colors.HexColor('#14635C'),
         spaceAfter=30,
         alignment=TA_CENTER
     )
@@ -227,7 +227,7 @@ def generate_scenario_pdf(scenario_data, output_path):
     
     hypotheses_table = Table(hypotheses_data, colWidths=[8*cm, 8*cm])
     hypotheses_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#14635C')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -256,7 +256,7 @@ def generate_scenario_pdf(scenario_data, output_path):
     
     proportions_table = Table(proportions_data, colWidths=[6*cm, 3*cm, 3*cm, 3*cm])
     proportions_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#14635C')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -287,7 +287,7 @@ def generate_scenario_pdf(scenario_data, output_path):
     
     kpis_table = Table(kpis_data, colWidths=[8*cm, 8*cm])
     kpis_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2ecc71')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3D8B7A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -333,7 +333,7 @@ def generate_scenario_pdf(scenario_data, output_path):
     
     detailed_table = Table(detailed_data, colWidths=[3*cm, 2*cm, 3*cm, 2*cm, 2*cm, 2*cm, 2*cm])
     detailed_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#14635C')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -372,34 +372,14 @@ def format_nombre(nombre, decimals=0):
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Simulateur BOB - Budget Interactif",
-    page_icon="📊",
+    page_title="BOB Finance — Simulateur budgétaire",
+    page_icon="⬡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS personnalisé
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f4788;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .big-number {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #1f4788;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Thème graphique professionnel
+st.markdown(f"<style>{apply_theme_css()}</style>", unsafe_allow_html=True)
 
 # Cache des données
 @st.cache_data
@@ -584,10 +564,6 @@ def calculer_repartition_cotisations(df_result, cotisation_solidaire, cotisation
 
 # Fonction principale
 def main():
-    # En-tête
-    st.markdown('<h1 class="main-header">📊 Simulateur de Budget Interactif - BOB</h1>', unsafe_allow_html=True)
-    st.markdown("### Bibliothèque d'Objets Besançon")
-    
     # Charger les données
     with st.spinner("Chargement des données..."):
         df, margins, df_behaviors = load_cached_data()
@@ -596,20 +572,32 @@ def main():
     # Calculer le nombre d'intéressés à partir du pourcentage moyen d'intérêt
     pct_interet_moyen = df_behaviors['pct_interet'].mean()
     nb_interesses_total = int(population_totale * pct_interet_moyen / 100)
+
+    st.markdown(
+        render_hero(population_totale, nb_interesses_total, format_nombre),
+        unsafe_allow_html=True,
+    )
     
     # Sidebar - Paramètres
-    st.sidebar.header("🎛️ Paramètres de Simulation")
+    st.sidebar.markdown(
+        """
+        <div class="sidebar-brand">
+          <p class="title">Paramètres</p>
+          <p class="desc">Ajustez le scénario d'adhésion et la grille tarifaire.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📈 Objectif d'Adhérents")
+    st.sidebar.markdown("##### Objectif d'adhérents")
     
     # Curseur principal : Nombre d'adhérents
     nb_adherents = st.sidebar.slider(
         "Nombre d'adhérents cible",
-        min_value=100,
-        max_value=3000,
+        min_value=10,
+        max_value=1500,
         value=1000,
-        step=50,
+        step=10,
         help="Ajustez le nombre d'adhérents souhaité"
     )
     
@@ -622,7 +610,7 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("💰 Paramètres Tarifaires")
+    st.sidebar.markdown("##### Grille tarifaire")
     
     # Tarifs de cotisation par type
     st.sidebar.markdown("**Cotisation annuelle (€)**")
@@ -664,7 +652,7 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔄 Fréquence d'Usage")
+    st.sidebar.markdown("##### Fréquence d'usage")
     
     # Nombre moyen de locations par adhérent par an
     nb_locations_moyen = st.sidebar.number_input(
@@ -677,12 +665,11 @@ def main():
     )
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Répartition des Tarifs par Profil")
+    st.sidebar.markdown("##### Répartition des tarifs par profil")
     
     st.sidebar.markdown("""
-    **Ajustez les proportions de chaque tarif selon les profils** 
-    
-    Les valeurs doivent totaliser 100% pour chaque profil.
+    Ajustez les proportions de chaque tarif selon les profils.
+    Les valeurs doivent totaliser **100 %** pour chaque profil.
     """)
     
     # Définir les profils disponibles
@@ -816,7 +803,7 @@ def main():
     st.sidebar.markdown("---")
     
     # Bouton de réinitialisation
-    if st.sidebar.button("🔄 Réinitialiser", use_container_width=True):
+    if st.sidebar.button("Réinitialiser", use_container_width=True):
         st.rerun()
     
     # Calcul de la simulation
@@ -843,46 +830,52 @@ def main():
         df_result['recettes_totales'] = df_result['recettes_cotisations'] + df_result['recettes_locations']
     
     # Métriques principales
-    st.markdown("## 📊 Résultats de la Simulation")
-    
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown(
+        render_section(
+            "Résultats de la simulation",
+            "Indicateurs clés calculés à partir de votre scénario.",
+        ),
+        unsafe_allow_html=True,
+    )
     
     total_adherents = df_result['nb_adherents'].sum()
     total_cotisations = df_result['recettes_cotisations'].sum()
     total_locations = df_result['recettes_locations'].sum()
     total_recettes = df_result['recettes_totales'].sum()
     recette_par_adherent = total_recettes / total_adherents if total_adherents > 0 else 0
-    
-    with col1:
-        st.metric(
-            "👥 Adhérents",
-            format_nombre(total_adherents),
-            f"{format_nombre(pct_conversion, 1)}% des intéressés"
-        )
-    
-    with col2:
-        st.metric(
-            "💶 Cotisations",
-            f"{format_nombre(total_cotisations)} €",
-            f"{format_nombre(total_cotisations/total_adherents)} €/adhérent"
-        )
-    
-    with col3:
-        st.metric(
-            "🔄 Locations",
-            f"{format_nombre(total_locations)} €",
-            f"{nb_locations_moyen} loc/an/adhérent"
-        )
-    
-    with col4:
-        st.metric(
-            "💰 Recettes Totales",
-            f"{format_nombre(total_recettes)} €",
-            f"{format_nombre(recette_par_adherent)} €/adhérent"
-        )
+
+    st.markdown(
+        render_kpi_grid([
+            {
+                "label": "Adhérents",
+                "value": format_nombre(total_adherents),
+                "delta": f"{format_nombre(pct_conversion, 1)} % des intéressés",
+                "accent": COLORS["primary"],
+            },
+            {
+                "label": "Cotisations",
+                "value": f"{format_nombre(total_cotisations)} €",
+                "delta": f"{format_nombre(total_cotisations/total_adherents)} € / adhérent",
+                "accent": COLORS["sage"],
+            },
+            {
+                "label": "Locations",
+                "value": f"{format_nombre(total_locations)} €",
+                "delta": f"{nb_locations_moyen} loc. / an / adhérent",
+                "accent": COLORS["male"],
+            },
+            {
+                "label": "Recettes totales",
+                "value": f"{format_nombre(total_recettes)} €",
+                "delta": f"{format_nombre(recette_par_adherent)} € / adhérent",
+                "accent": COLORS["accent"],
+            },
+        ]),
+        unsafe_allow_html=True,
+    )
     
     # Répartition des cotisations
-    st.markdown("---")
+    st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
     
     # Calculer les totaux pour la répartition
     nb_solidaire_total = int(df_result['nb_solidaire'].sum())
@@ -893,7 +886,7 @@ def main():
     col_export1, col_export2, col_export3 = st.columns([1, 2, 1])
     with col_export2:
         if REPORTLAB_AVAILABLE:
-            if st.button("📄 Exporter le Scénario en PDF", use_container_width=True, type="primary"):
+            if st.button("Exporter le scénario en PDF", use_container_width=True, type="primary"):
                 with st.spinner("Génération du rapport PDF en cours..."):
                     try:
                         # Créer le répertoire de sortie temporaire pour les graphiques
@@ -936,10 +929,10 @@ def main():
                             fig_recettes = go.Figure(data=[go.Pie(
                                 labels=['Cotisations', 'Locations'],
                                 values=[total_cotisations, total_locations],
-                                hole=0.4,
-                                marker=dict(colors=['#1f4788', '#2ecc71'])
+                                hole=0.45,
+                                marker=dict(colors=[COLORS['cotisations'], COLORS['locations']])
                             )])
-                            fig_recettes.update_layout(title="Répartition des Recettes", height=400)
+                            apply_plotly_theme(fig_recettes, title="Répartition des Recettes", height=400)
                             path_recettes = temp_dir / f"repartition_recettes_{timestamp}.png"
                             if export_plotly_figure(fig_recettes, path_recettes):
                                 scenario_data['graphiques_paths'].append(("Répartition des Recettes", str(path_recettes)))
@@ -956,9 +949,9 @@ def main():
                                 title="Distribution par Âge",
                                 labels={'x': 'Nombre d\'adhérents', 'y': 'Tranche d\'âge'},
                                 color=age_dist.values,
-                                color_continuous_scale='Blues'
+                                color_continuous_scale=SCALE_TEAL
                             )
-                            fig_age.update_layout(height=400, showlegend=False)
+                            apply_plotly_theme(fig_age, title="Distribution par Âge", height=400, showlegend=False)
                             path_age = temp_dir / f"distribution_age_{timestamp}.png"
                             if export_plotly_figure(fig_age, path_age):
                                 scenario_data['graphiques_paths'].append(("Distribution par Âge", str(path_age)))
@@ -975,9 +968,10 @@ def main():
                             fig_cotis = go.Figure(data=[go.Pie(
                                 labels=[f"{row['Type']}<br>{row['Tarif']}" for _, row in cotisation_data.iterrows()],
                                 values=cotisation_data['Nombre'],
-                                marker=dict(colors=['#f39c12', '#1f4788', '#27ae60'])
+                                hole=0.4,
+                                marker=dict(colors=[COLORS['solidaire'], COLORS['normale'], COLORS['soutien']])
                             )])
-                            fig_cotis.update_layout(title="Répartition des Cotisations", height=400)
+                            apply_plotly_theme(fig_cotis, title="Répartition des Cotisations", height=400)
                             path_cotis = temp_dir / f"repartition_cotisations_{timestamp}.png"
                             if export_plotly_figure(fig_cotis, path_cotis):
                                 scenario_data['graphiques_paths'].append(("Répartition des Cotisations", str(path_cotis)))
@@ -997,7 +991,7 @@ def main():
                         with open(pdf_path, 'rb') as pdf_file:
                             pdf_bytes = pdf_file.read()
                             st.download_button(
-                                label="📥 Télécharger le PDF",
+                                label="Télécharger le PDF",
                                 data=pdf_bytes,
                                 file_name=f"scenario_bob_{timestamp}.pdf",
                                 mime='application/pdf',
@@ -1013,42 +1007,49 @@ def main():
         else:
             st.info("💡 Pour activer l'export PDF, installez ReportLab : `pip install reportlab kaleido`")
     
-    st.markdown("---")
-    st.markdown("### 💶 Répartition des Cotisations")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric(
-            f"Tarif Solidaire ({cotisation_solidaire}€)",
-            format_nombre(nb_solidaire_total),
-            f"{format_nombre(nb_solidaire_total/total_adherents*100, 1)}%"
-        )
-    
-    with col2:
-        st.metric(
-            f"Tarif Normal ({cotisation_normale}€)",
-            format_nombre(nb_normale_total),
-            f"{format_nombre(nb_normale_total/total_adherents*100, 1)}%"
-        )
-    
-    with col3:
-        st.metric(
-            f"Tarif Soutien ({cotisation_soutien}€)",
-            format_nombre(nb_soutien_total),
-            f"{format_nombre(nb_soutien_total/total_adherents*100, 1)}%"
-        )
+    st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
+    st.markdown(
+        render_section(
+            "Répartition des cotisations",
+            "Structure tarifaire du scénario sélectionné.",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        render_tariff_grid([
+            {
+                "label": f"Tarif solidaire · {cotisation_solidaire} €",
+                "value": format_nombre(nb_solidaire_total),
+                "delta": f"{format_nombre(nb_solidaire_total/total_adherents*100, 1)} % des adhérents",
+                "accent": COLORS["solidaire"],
+            },
+            {
+                "label": f"Tarif normal · {cotisation_normale} €",
+                "value": format_nombre(nb_normale_total),
+                "delta": f"{format_nombre(nb_normale_total/total_adherents*100, 1)} % des adhérents",
+                "accent": COLORS["normale"],
+            },
+            {
+                "label": f"Tarif soutien · {cotisation_soutien} €",
+                "value": format_nombre(nb_soutien_total),
+                "delta": f"{format_nombre(nb_soutien_total/total_adherents*100, 1)} % des adhérents",
+                "accent": COLORS["soutien"],
+            },
+        ]),
+        unsafe_allow_html=True,
+    )
     
     # Graphiques
-    st.markdown("---")
+    st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
     
     # Onglets
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 Vue d'ensemble", 
-        "👥 Profils", 
-        "💰 Recettes", 
-        "📊 Détails",
-        "📋 Résultats Enquête"
+        "Vue d'ensemble", 
+        "Profils", 
+        "Recettes", 
+        "Détails",
+        "Résultats enquête"
     ])
     
     with tab1:
@@ -1059,13 +1060,11 @@ def main():
             fig_recettes = go.Figure(data=[go.Pie(
                 labels=['Cotisations', 'Locations'],
                 values=[total_cotisations, total_locations],
-                hole=0.4,
-                marker=dict(colors=['#1f4788', '#2ecc71'])
+                hole=0.45,
+                marker=dict(colors=[COLORS['cotisations'], COLORS['locations']]),
+                textinfo='label+percent',
             )])
-            fig_recettes.update_layout(
-                title="Répartition des Recettes",
-                height=400
-            )
+            apply_plotly_theme(fig_recettes, title="Répartition des recettes", height=400)
             st.plotly_chart(fig_recettes, use_container_width=True)
         
         with col2:
@@ -1075,12 +1074,12 @@ def main():
                 x=age_dist.values,
                 y=age_dist.index,
                 orientation='h',
-                title="Distribution par Âge",
+                title="Distribution par âge",
                 labels={'x': 'Nombre d\'adhérents', 'y': 'Tranche d\'âge'},
                 color=age_dist.values,
-                color_continuous_scale='Blues'
+                color_continuous_scale=SCALE_TEAL
             )
-            fig_age.update_layout(height=400, showlegend=False)
+            apply_plotly_theme(fig_age, title="Distribution par âge", height=400, showlegend=False)
             st.plotly_chart(fig_age, use_container_width=True)
         
         # Distribution par sexe et CSP
@@ -1092,9 +1091,11 @@ def main():
             fig_sexe = go.Figure(data=[go.Pie(
                 labels=sexe_labels,
                 values=sexe_dist.values,
-                marker=dict(colors=['#e74c3c', '#3498db'])
+                hole=0.4,
+                marker=dict(colors=[COLORS['female'], COLORS['male']]),
+                textinfo='label+percent',
             )])
-            fig_sexe.update_layout(title="Distribution par Sexe", height=400)
+            apply_plotly_theme(fig_sexe, title="Distribution par sexe", height=400)
             st.plotly_chart(fig_sexe, use_container_width=True)
         
         with col4:
@@ -1107,13 +1108,18 @@ def main():
             fig_cotis = go.Figure(data=[go.Pie(
                 labels=[f"{row['Type']}<br>{row['Tarif']}" for _, row in cotisation_data.iterrows()],
                 values=cotisation_data['Nombre'],
-                marker=dict(colors=['#f39c12', '#1f4788', '#27ae60'])
+                hole=0.4,
+                marker=dict(colors=[COLORS['solidaire'], COLORS['normale'], COLORS['soutien']]),
+                textinfo='label+percent',
             )])
-            fig_cotis.update_layout(title="Répartition des Cotisations", height=400)
+            apply_plotly_theme(fig_cotis, title="Répartition des cotisations", height=400)
             st.plotly_chart(fig_cotis, use_container_width=True)
         
         # Distribution par CSP
-        st.markdown("### Distribution par CSP")
+        st.markdown(
+            render_section("Distribution par CSP", "Répartition des adhérents selon la situation professionnelle."),
+            unsafe_allow_html=True,
+        )
         col5, col6 = st.columns([2, 1])
         
         with col5:
@@ -1125,13 +1131,16 @@ def main():
                 title="Distribution par CSP",
                 labels={'x': 'Nombre d\'adhérents', 'y': 'Situation professionnelle'},
                 color=csp_dist.values,
-                color_continuous_scale='Greens'
+                color_continuous_scale=SCALE_TEAL
             )
-            fig_csp.update_layout(height=400, showlegend=False)
+            apply_plotly_theme(fig_csp, title="Distribution par CSP", height=400, showlegend=False)
             st.plotly_chart(fig_csp, use_container_width=True)
     
     with tab2:
-        st.subheader("🏆 Top 10 Profils Contributeurs")
+        st.markdown(
+            render_section("Top 10 profils contributeurs", "Classement des segments qui génèrent le plus de recettes."),
+            unsafe_allow_html=True,
+        )
         
         top10 = df_result.nlargest(10, 'recettes_totales')[
             ['profil', 'nb_adherents', 'recettes_cotisations', 'recettes_locations', 'recettes_totales']
@@ -1150,15 +1159,18 @@ def main():
             x='Total (€)',
             y='Profil',
             orientation='h',
-            title="Recettes par Profil (Top 10)",
+            title="Recettes par profil (Top 10)",
             color='Total (€)',
-            color_continuous_scale='Viridis'
+            color_continuous_scale=SCALE_TEAL
         )
-        fig_top.update_layout(height=500, showlegend=False)
+        apply_plotly_theme(fig_top, title="Recettes par profil (Top 10)", height=500, showlegend=False)
         st.plotly_chart(fig_top, use_container_width=True)
     
     with tab3:
-        st.subheader("💰 Analyse des Recettes")
+        st.markdown(
+            render_section("Analyse des recettes", "Lecture croisée des revenus par âge, CSP et sexe."),
+            unsafe_allow_html=True,
+        )
         
         col1, col2 = st.columns(2)
         
@@ -1168,12 +1180,12 @@ def main():
             fig_rec_age = px.bar(
                 x=recettes_age.index,
                 y=recettes_age.values,
-                title="Recettes par Tranche d'Âge",
+                title="Recettes par tranche d'âge",
                 labels={'x': 'Âge', 'y': 'Recettes (€)'},
                 color=recettes_age.values,
-                color_continuous_scale='RdYlGn'
+                color_continuous_scale=SCALE_TEAL
             )
-            fig_rec_age.update_layout(showlegend=False)
+            apply_plotly_theme(fig_rec_age, title="Recettes par tranche d'âge", showlegend=False)
             st.plotly_chart(fig_rec_age, use_container_width=True)
         
         with col2:
@@ -1185,9 +1197,9 @@ def main():
                 title="Recettes par CSP",
                 labels={'x': 'CSP', 'y': 'Recettes (€)'},
                 color=recettes_csp.values,
-                color_continuous_scale='Blues'
+                color_continuous_scale=SCALE_TEAL
             )
-            fig_rec_csp.update_layout(showlegend=False)
+            apply_plotly_theme(fig_rec_csp, title="Recettes par CSP", showlegend=False)
             st.plotly_chart(fig_rec_csp, use_container_width=True)
         
         # Heatmap recettes par âge et sexe
@@ -1201,15 +1213,19 @@ def main():
         
         fig_heatmap = px.imshow(
             pivot_recettes,
-            title="Heatmap des Recettes (Âge × Sexe)",
+            title="Heatmap des recettes (âge × sexe)",
             labels=dict(x="Sexe", y="Âge", color="Recettes (€)"),
-            color_continuous_scale='YlOrRd',
+            color_continuous_scale=SCALE_TEAL,
             aspect='auto'
         )
+        apply_plotly_theme(fig_heatmap, title="Heatmap des recettes (âge × sexe)", height=460)
         st.plotly_chart(fig_heatmap, use_container_width=True)
     
     with tab4:
-        st.subheader("📋 Tableau Détaillé par Profil")
+        st.markdown(
+            render_section("Tableau détaillé par profil", "Exportable pour analyse fine et reporting."),
+            unsafe_allow_html=True,
+        )
         
         # Préparer le tableau
         df_export = df_result[[
@@ -1278,14 +1294,20 @@ def main():
         # Bouton d'export
         csv = df_filtered.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="📥 Télécharger en CSV",
+            label="Télécharger en CSV",
             data=csv,
             file_name=f'simulation_bob_{nb_adherents}_adherents.csv',
             mime='text/csv',
         )
     
     with tab5:
-        st.subheader("📋 Résultats de l'Enquête (Redressés)")
+        st.markdown(
+            render_section(
+                "Résultats de l'enquête (redressés)",
+                "Visualisations pondérées après calage sur marges INSEE.",
+            ),
+            unsafe_allow_html=True,
+        )
         
         st.markdown("""
         Cette section présente les réponses à l'enquête BOB **redressées** selon les effectifs 
@@ -1332,7 +1354,7 @@ def main():
                 all_warnings = warnings_age + warnings_sexe + warnings_csp
                 if all_warnings:
                     st.warning("""
-                    ⚠️ **Attention : Échantillon trop petit pour certains profils**
+                    **Attention : échantillon trop petit pour certains profils**
                     
                     Les résultats redressés peuvent être peu fiables pour les catégories suivantes avec trop peu de répondants :
                     
@@ -1342,7 +1364,7 @@ def main():
                     """)
                 
                 # Statistiques du redressement
-                st.markdown("---")
+                st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
@@ -1357,14 +1379,14 @@ def main():
                 with col4:
                     st.metric("Poids moyen", format_nombre(df_survey['weight'].mean(), 2))
                 
-                st.markdown("---")
+                st.markdown('<hr class="bob-divider"/>', unsafe_allow_html=True)
                 
                 # Sous-onglets pour différentes questions
                 subtab1, subtab2, subtab3, subtab4 = st.tabs([
-                    "🎯 Intérêt & Cotisation",
-                    "🔄 Partage & Usage",
-                    "💶 Prix & Budget",
-                    "📊 Analyses Croisées"
+                    "Intérêt & cotisation",
+                    "Partage & usage",
+                    "Prix & budget",
+                    "Analyses croisées"
                 ])
                 
                 with subtab1:
@@ -1388,9 +1410,10 @@ def main():
                                 textinfo='label+percent',
                                 textposition='auto'
                             )])
-                            fig.update_layout(
-                                title="Intérêt pour le projet<br>(Résultats redressés)",
-                                height=400
+                            apply_plotly_theme(
+                                fig,
+                                title="Intérêt pour le projet (redressé)",
+                                height=400,
                             )
                             st.plotly_chart(fig, use_container_width=True)
                             
@@ -1430,9 +1453,10 @@ def main():
                                 textinfo='percent',
                                 textposition='auto'
                             )])
-                            fig.update_layout(
-                                title="Acceptation cotisation<br>(Résultats redressés)",
-                                height=400
+                            apply_plotly_theme(
+                                fig,
+                                title="Acceptation cotisation (redressé)",
+                                height=400,
                             )
                             st.plotly_chart(fig, use_container_width=True)
                             
@@ -1469,11 +1493,11 @@ def main():
                                 x=data_pct.index,
                                 y=data_pct.values,
                                 labels={'x': 'Réponse', 'y': 'Pourcentage (%)'},
-                                title="Accepte de partager des objets (Redressé)",
+                                title="Accepte de partager des objets (redressé)",
                                 color=data_pct.values,
-                                color_continuous_scale='RdYlGn'
+                                color_continuous_scale=SCALE_TEAL
                             )
-                            fig.update_layout(height=400, showlegend=False)
+                            apply_plotly_theme(fig, title="Accepte de partager des objets (redressé)", height=400, showlegend=False)
                             st.plotly_chart(fig, use_container_width=True)
                     
                     with col2:
@@ -1485,15 +1509,15 @@ def main():
                             # Couleurs sémantiques pour l'utilisation de services
                             # Rouge = jamais, Orange = occasionnellement, Vert = régulièrement
                             color_map = {
-                                'non, jamais': '#e74c3c',  # Rouge
-                                'non jamais': '#e74c3c',
-                                'jamais': '#e74c3c',
-                                'non': '#e74c3c',
-                                'oui, occasionnellement': '#f39c12',  # Orange
-                                'occasionnellement': '#f39c12',
-                                'oui, régulièrement': '#2ecc71',  # Vert
-                                'régulièrement': '#2ecc71',
-                                'oui': '#2ecc71'
+                                'non, jamais': COLORS['danger'],
+                                'non jamais': COLORS['danger'],
+                                'jamais': COLORS['danger'],
+                                'non': COLORS['female'],
+                                'oui, occasionnellement': COLORS['accent'],
+                                'occasionnellement': COLORS['accent'],
+                                'oui, régulièrement': COLORS['sage'],
+                                'régulièrement': COLORS['sage'],
+                                'oui': COLORS['success']
                             }
                             
                             # Créer la liste de couleurs
@@ -1510,7 +1534,7 @@ def main():
                                 
                                 # Si pas trouvé, utiliser une couleur par défaut
                                 if not color_found:
-                                    color_found = '#3498db'  # Bleu par défaut
+                                    color_found = COLORS['male']
                                 
                                 bar_colors.append(color_found)
                             
@@ -1523,12 +1547,13 @@ def main():
                                 textposition='outside'
                             )])
                             
-                            fig.update_layout(
-                                title="A déjà utilisé des services de location/prêt (Redressé)",
+                            apply_plotly_theme(
+                                fig,
+                                title="Services de location/prêt déjà utilisés (redressé)",
+                                height=400,
+                                showlegend=False,
                                 xaxis_title="Réponse",
                                 yaxis_title="Pourcentage (%)",
-                                height=400,
-                                showlegend=False
                             )
                             st.plotly_chart(fig, use_container_width=True)
                 
@@ -1580,7 +1605,7 @@ def main():
                                 histfunc='sum',
                                 y=df_clean_numeric['weight'],
                                 name='Redressé',
-                                marker_color='steelblue',
+                                marker_color=COLORS['primary'],
                                 opacity=0.7,
                                 nbinsx=15
                             ))
@@ -1589,15 +1614,16 @@ def main():
                             fig.add_vline(
                                 x=mean_weighted,
                                 line_dash="dash",
-                                line_color="red",
+                                line_color=COLORS['accent'],
                                 annotation_text=f"Moyenne: {format_nombre(mean_weighted, 2)}€"
                             )
                             
-                            fig.update_layout(
-                                title="Distribution du prix maximum accepté (Redressé)",
+                            apply_plotly_theme(
+                                fig,
+                                title="Distribution du prix maximum accepté (redressé)",
+                                height=400,
                                 xaxis_title="Prix (€)",
                                 yaxis_title="Effectif pondéré",
-                                height=400
                             )
                             
                             st.plotly_chart(fig, use_container_width=True)
@@ -1701,13 +1727,14 @@ def main():
                                 y=crosstab[col],
                             ))
                         
-                        fig.update_layout(
+                        apply_plotly_theme(
+                            fig,
+                            title=f"{analyse_var} selon {profile_var} (redressé)",
+                            height=500,
                             barmode='group',
-                            title=f"{analyse_var} selon {profile_var} (Redressé)",
                             xaxis_title=profile_var,
                             yaxis_title="Pourcentage (%)",
-                            height=500,
-                            legend_title=analyse_var
+                            legend_title=analyse_var,
                         )
                         
                         st.plotly_chart(fig, use_container_width=True)
@@ -1725,11 +1752,10 @@ def main():
                 st.code(traceback.format_exc(), language='python')
     
     # Footer
-    st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; color: #666;'>
-        <p>Simulateur BOB - Bibliothèque d'Objets Besançon</p>
-        <p>Ajustez les curseurs dans la barre latérale pour explorer différents scénarios</p>
+    <div class="bob-footer">
+        <p><strong>BOB Finance</strong> — Bibliothèque d'Objets Besançon</p>
+        <p>Ajustez les paramètres latéraux pour explorer différents scénarios budgétaires.</p>
     </div>
     """, unsafe_allow_html=True)
 
