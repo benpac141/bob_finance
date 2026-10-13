@@ -919,57 +919,57 @@ def main():
             'age_group': '25-34',
             'csp': 'Actifs',
             'default_solidaire': 10,
-            'default_normale': 80,
-            'default_soutien': 10
+            'default_normale': 88,
+            'default_soutien': 2
         },
         'Actifs Adultes (35-44)': {
             'age_group': '35-44',
             'csp': 'Actifs',
             'default_solidaire': 10,
-            'default_normale': 80,
-            'default_soutien': 10
+            'default_normale': 85,
+            'default_soutien': 5
         },
         'Actifs Seniors (45-54)': {
             'age_group': '45-54',
             'csp': 'Actifs',
             'default_solidaire': 5,
-            'default_normale': 55,
-            'default_soutien': 40
+            'default_normale': 90,
+            'default_soutien': 5
         },
         'Actifs Seniors (55-64)': {
             'age_group': '55-64',
             'csp': 'Actifs',
             'default_solidaire': 5,
-            'default_normale': 55,
-            'default_soutien': 40
+            'default_normale': 90,
+            'default_soutien': 5
         },
         'Retraités (55-64)': {
             'age_group': '55-64',
             'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
-            'default_normale': 60,
-            'default_soutien': 30
+            'default_normale': 90,
+            'default_soutien': 0
         },
         'Retraités (65+)': {
             'age_group': '65+',
             'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
-            'default_normale': 60,
-            'default_soutien': 30
+            'default_normale': 90,
+            'default_soutien': 0
         },
         'Retraités (autres)': {
             'age_group': None,
             'csp': 'Retraites/Inactifs',
             'default_solidaire': 10,
-            'default_normale': 60,
-            'default_soutien': 30
+            'default_normale': 90,
+            'default_soutien': 0
         },
         'Autres profils': {
             'age_group': None,
             'csp': None,
             'default_solidaire': 10,
-            'default_normale': 80,
-            'default_soutien': 10
+            'default_normale': 90,
+            'default_soutien': 0
         }
     }
     
@@ -980,18 +980,18 @@ def main():
         for nom_profil, config in profils_disponibles.items():
             if profil_eligible_justificatif(config):
                 continue
-            normale = st.session_state.get(f"normale_{nom_profil}", config['default_normale'])
-            soutien = st.session_state.get(f"soutien_{nom_profil}", config['default_soutien'])
+            normale = st.session_state.get(f"normale2_{nom_profil}", config['default_normale'])
+            soutien = st.session_state.get(f"soutien2_{nom_profil}", config['default_soutien'])
             normale_new, soutien_new = repartir_parts_sans_solidaire(normale, soutien)
-            st.session_state[f"solidaire_{nom_profil}"] = 0
-            st.session_state[f"normale_{nom_profil}"] = normale_new
-            st.session_state[f"soutien_{nom_profil}"] = soutien_new
+            st.session_state[f"solidaire2_{nom_profil}"] = 0
+            st.session_state[f"normale2_{nom_profil}"] = normale_new
+            st.session_state[f"soutien2_{nom_profil}"] = soutien_new
         st.session_state["_justificatif_sliders_verrouilles"] = True
     elif not mode_justificatif and st.session_state.get("_justificatif_sliders_verrouilles"):
         for nom_profil, config in profils_disponibles.items():
             if profil_eligible_justificatif(config):
                 continue
-            st.session_state[f"solidaire_{nom_profil}"] = config['default_solidaire']
+            st.session_state[f"solidaire2_{nom_profil}"] = config['default_solidaire']
         st.session_state["_justificatif_sliders_verrouilles"] = False
     
     for nom_profil, config in profils_disponibles.items():
@@ -1005,8 +1005,8 @@ def main():
                 min_value=0,
                 max_value=100,
                 value=0 if solidaire_verrouille else config['default_solidaire'],
-                step=5,
-                key=f"solidaire_{nom_profil}",
+                step=1,
+                key=f"solidaire2_{nom_profil}",
                 disabled=solidaire_verrouille,
             )
             if solidaire_verrouille:
@@ -1017,8 +1017,8 @@ def main():
                 min_value=0,
                 max_value=100,
                 value=config['default_normale'],
-                step=5,
-                key=f"normale_{nom_profil}"
+                step=1,
+                key=f"normale2_{nom_profil}"
             )
             
             soutien = st.slider(
@@ -1026,8 +1026,8 @@ def main():
                 min_value=0,
                 max_value=100,
                 value=config['default_soutien'],
-                step=5,
-                key=f"soutien_{nom_profil}"
+                step=1,
+                key=f"soutien2_{nom_profil}"
             )
             
             total = solidaire + normale + soutien
