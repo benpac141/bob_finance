@@ -24,9 +24,11 @@ import io
 import base64
 
 # Ajouter le chemin
-BASE_DIR = Path(__file__).parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "src"))
+sys.path.insert(0, str(SCRIPT_DIR))
 
 # Imports
 from scripts.budget_simulator_interactive import (
@@ -36,18 +38,30 @@ from scripts.budget_simulator_interactive import (
     calculate_recettes_by_profile
 )
 from raking import RakingWeighter
-from ui_theme import (
-    COLORS,
-    PALETTE,
-    SCALE_TEAL,
-    apply_theme_css,
-    apply_plotly_theme,
-    render_hero,
-    render_section,
-    render_kpi_grid,
-    render_status_banner,
-    render_tariff_grid,
-)
+
+# Le thème est chargé par chemin absolu : sur Streamlit Cloud, le dossier
+# scripts/ est celui du fichier principal, alors que src/ n'est pas toujours
+# visible comme module.
+import importlib.util
+
+_theme_path = SCRIPT_DIR / "ui_theme.py"
+_theme_spec = importlib.util.spec_from_file_location("bob_ui_theme", _theme_path)
+if _theme_spec is None or _theme_spec.loader is None:
+    raise ImportError(f"Module de thème introuvable : {_theme_path}")
+_theme = importlib.util.module_from_spec(_theme_spec)
+sys.modules["bob_ui_theme"] = _theme
+_theme_spec.loader.exec_module(_theme)
+
+COLORS = _theme.COLORS
+PALETTE = _theme.PALETTE
+SCALE_TEAL = _theme.SCALE_TEAL
+apply_theme_css = _theme.apply_theme_css
+apply_plotly_theme = _theme.apply_plotly_theme
+render_hero = _theme.render_hero
+render_section = _theme.render_section
+render_kpi_grid = _theme.render_kpi_grid
+render_status_banner = _theme.render_status_banner
+render_tariff_grid = _theme.render_tariff_grid
 
 # Imports pour PDF
 try:
