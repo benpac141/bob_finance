@@ -594,10 +594,10 @@ def main():
     # Curseur principal : Nombre d'adhérents
     nb_adherents = st.sidebar.slider(
         "Nombre d'adhérents cible",
-        min_value=100,
-        max_value=3000,
+        min_value=10,
+        max_value=1500,
         value=1000,
-        step=50,
+        step=10,
         help="Ajustez le nombre d'adhérents souhaité"
     )
     
