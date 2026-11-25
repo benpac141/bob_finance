@@ -62,6 +62,34 @@ def test_repartition_sur_100_adherents():
     assert abs(out.loc[0, 'cotisation_moyenne'] - 15.1) < 1e-9
 
 
+def test_repartition_sur_lignes_petites():
+    """20 lignes de 4 adhérents : le total suit 14 / 28 / 58."""
+    df = pd.DataFrame([
+        {
+            'age_group': '35-44',
+            'csp': 'Actifs',
+            'nb_adherents': 4,
+        }
+        for _ in range(20)
+    ])
+    out = calculer_repartition_cotisations(
+        df,
+        5,
+        10,
+        20,
+        {},
+        proportions_globales=normaliser_ratios_pct(14, 28, 58),
+    )
+    assert int(out['nb_solidaire'].sum()) == 11
+    assert int(out['nb_normale'].sum()) == 23
+    assert int(out['nb_soutien'].sum()) == 46
+    assert int(out['nb_adherents'].sum()) == (
+        int(out['nb_solidaire'].sum())
+        + int(out['nb_normale'].sum())
+        + int(out['nb_soutien'].sum())
+    )
+
+
 def test_recalage_ignore_la_regle_justificatif():
     """Le mix historique prime sur le verrou solidaire."""
     df = pd.DataFrame([{
@@ -114,6 +142,7 @@ def main():
         test_normalise_si_total_different_de_100,
         test_parts_nulles_retombe_sur_historique,
         test_repartition_sur_100_adherents,
+        test_repartition_sur_lignes_petites,
         test_recalage_ignore_la_regle_justificatif,
         test_zero_adherent_garde_tarif_normal,
     ]
