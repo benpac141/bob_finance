@@ -709,6 +709,43 @@ def normaliser_ratios_pct(solidaire, normale, soutien):
     }
 
 
+def repartir_plus_grand_reste(total, poids):
+    """Répartit un effectif entier au plus proche des poids.
+
+    La somme des parts vaut total. Les lignes trop petites pour
+    int(effectif * ratio) ne perdent pas le ratio global.
+
+    Args:
+        total: Effectif à répartir.
+        poids: Poids relatifs, une valeur par ligne.
+
+    Returns:
+        list: Entiers de même longueur que poids.
+    """
+    n = len(poids)
+    if n == 0:
+        return []
+    total = int(total)
+    if total <= 0:
+        return [0] * n
+    somme = float(sum(poids))
+    if somme <= 0:
+        parts = [0] * n
+        parts[-1] = total
+        return parts
+    brut = [total * float(poids[i]) / somme for i in range(n)]
+    base = [int(valeur) for valeur in brut]
+    reste = total - sum(base)
+    ordre = sorted(
+        range(n),
+        key=lambda i: brut[i] - base[i],
+        reverse=True,
+    )
+    for i in ordre[:reste]:
+        base[i] += 1
+    return base
+
+
 def calculer_repartition_cotisations(
     df_result,
     cotisation_solidaire,
@@ -777,25 +814,49 @@ def calculer_repartition_cotisations(
             'normale': 0.8,
             'soutien': 0.1
         })
-    
+
+    comptes_globaux = None
+    if proportions_globales is not None:
+        index = list(df_result.index)
+        effectifs = [int(df_result.at[i, 'nb_adherents']) for i in index]
+        total = sum(effectifs)
+        cibles = repartir_plus_grand_reste(
+            total,
+            [
+                proportions_globales['solidaire'],
+                proportions_globales['normale'],
+                proportions_globales['soutien'],
+            ],
+        )
+        solidaire_rows = repartir_plus_grand_reste(cibles[0], effectifs)
+        reste_places = [
+            effectifs[i] - solidaire_rows[i] for i in range(len(index))
+        ]
+        normale_rows = repartir_plus_grand_reste(cibles[1], reste_places)
+        soutien_rows = [
+            reste_places[i] - normale_rows[i] for i in range(len(index))
+        ]
+        comptes_globaux = {
+            idx: (solidaire_rows[i], normale_rows[i], soutien_rows[i])
+            for i, idx in enumerate(index)
+        }
+
     for idx, row in df_result.iterrows():
         age_group = row['age_group']
         csp = row['csp']
         nb_adherents = row['nb_adherents']
-        
-        if proportions_globales is not None:
-            proportions = proportions_globales
+
+        if comptes_globaux is not None:
+            nb_solidaire, nb_normale, nb_soutien = comptes_globaux[idx]
         else:
             proportions = trouver_profil(age_group, csp)
             if mode_justificatif:
                 proportions = restreindre_solidaire_justificatif(
                     proportions, csp
                 )
-        
-        # Calculer la répartition
-        nb_solidaire = int(nb_adherents * proportions['solidaire'])
-        nb_normale = int(nb_adherents * proportions['normale'])
-        nb_soutien = nb_adherents - nb_solidaire - nb_normale  # Pour s'assurer que le total est correct
+            nb_solidaire = int(nb_adherents * proportions['solidaire'])
+            nb_normale = int(nb_adherents * proportions['normale'])
+            nb_soutien = nb_adherents - nb_solidaire - nb_normale
         
         # Calculer la cotisation moyenne pour ce profil
         cotisation_moyenne = (
