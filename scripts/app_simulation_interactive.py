@@ -241,6 +241,10 @@ def generate_scenario_pdf(scenario_data, output_path):
         ['Dépense moyenne mensuelle', f"{format_nombre(scenario_data.get('depense_mensuelle', 0))} €"],
         ['Tarif solidaire sur justificatif', 'Oui' if scenario_data.get('mode_justificatif') else 'Non'],
     ]
+    if scenario_data.get('recalage_historique'):
+        hypotheses_data.append(
+            ['Recalage des ratios', "Historique de l'année"]
+        )
     
     hypotheses_table = Table(hypotheses_data, colWidths=[8*cm, 8*cm])
     hypotheses_table.setStyle(TableStyle([
@@ -671,6 +675,40 @@ def profil_eligible_justificatif(config):
     return normaliser_csp(config.get('csp')) in CSP_ELIGIBLES_JUSTIFICATIF
 
 
+# Parts observées cette année, en %. Somme = 100.
+RATIOS_HISTORIQUE_PCT = {
+    'solidaire': 14,
+    'normale': 28,
+    'soutien': 58,
+}
+
+
+def normaliser_ratios_pct(solidaire, normale, soutien):
+    """Ramène trois parts à une somme de 1.
+
+    Parts toutes nulles : retourne l'historique de l'année.
+
+    Args:
+        solidaire: Part solidaire.
+        normale: Part normale.
+        soutien: Part soutien.
+
+    Returns:
+        dict: Clés solidaire, normale, soutien. Somme = 1.
+    """
+    total = solidaire + normale + soutien
+    if total <= 0:
+        return {
+            cle: valeur / 100
+            for cle, valeur in RATIOS_HISTORIQUE_PCT.items()
+        }
+    return {
+        'solidaire': solidaire / total,
+        'normale': normale / total,
+        'soutien': soutien / total,
+    }
+
+
 def calculer_repartition_cotisations(
     df_result,
     cotisation_solidaire,
@@ -678,17 +716,24 @@ def calculer_repartition_cotisations(
     cotisation_soutien,
     proportions_par_profil,
     mode_justificatif=False,
+    proportions_globales=None,
 ):
     """
     Calcule la répartition des cotisations par type pour chaque profil.
-    
+
+    Si proportions_globales est fourni, le même mix s'applique à chaque
+    profil. La règle justificatif ne s'applique pas dans ce cas : le mix
+    historique est déjà celui observé.
+
     Args:
         df_result: DataFrame avec les profils
         cotisation_solidaire: Tarif solidaire
         cotisation_normale: Tarif normal
         cotisation_soutien: Tarif soutien
         proportions_par_profil: Dictionnaire avec les proportions par profil
-    
+        mode_justificatif: Réserve le solidaire aux publics éligibles
+        proportions_globales: Mix unique ou None
+
     Returns:
         DataFrame avec colonnes nb_solidaire, nb_normale, nb_soutien, cotisation_moyenne
     """
@@ -738,10 +783,14 @@ def calculer_repartition_cotisations(
         csp = row['csp']
         nb_adherents = row['nb_adherents']
         
-        # Trouver les proportions pour ce profil
-        proportions = trouver_profil(age_group, csp)
-        if mode_justificatif:
-            proportions = restreindre_solidaire_justificatif(proportions, csp)
+        if proportions_globales is not None:
+            proportions = proportions_globales
+        else:
+            proportions = trouver_profil(age_group, csp)
+            if mode_justificatif:
+                proportions = restreindre_solidaire_justificatif(
+                    proportions, csp
+                )
         
         # Calculer la répartition
         nb_solidaire = int(nb_adherents * proportions['solidaire'])
@@ -892,165 +941,226 @@ def main():
         )
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("##### Répartition des tarifs par profil")
-    
-    st.sidebar.markdown("""
-    Ajustez les proportions de chaque tarif selon les profils.
-    Les valeurs doivent totaliser **100 %** pour chaque profil.
-    """)
-    
-    # Définir les profils disponibles
-    profils_disponibles = {
-        'Jeunes (18-24)': {
-            'age_group': '18-24',
-            'csp': None,
-            'default_solidaire': 80,
-            'default_normale': 20,
-            'default_soutien': 0
-        },
-        'Étudiants/Chômeurs': {
-            'age_group': None,
-            'csp': 'Etudiants/Chomeurs',
-            'default_solidaire': 80,
-            'default_normale': 20,
-            'default_soutien': 0
-        },
-        'Actifs Jeunes (25-34)': {
-            'age_group': '25-34',
-            'csp': 'Actifs',
-            'default_solidaire': 10,
-            'default_normale': 88,
-            'default_soutien': 2
-        },
-        'Actifs Adultes (35-44)': {
-            'age_group': '35-44',
-            'csp': 'Actifs',
-            'default_solidaire': 10,
-            'default_normale': 85,
-            'default_soutien': 5
-        },
-        'Actifs Seniors (45-54)': {
-            'age_group': '45-54',
-            'csp': 'Actifs',
-            'default_solidaire': 5,
-            'default_normale': 90,
-            'default_soutien': 5
-        },
-        'Actifs Seniors (55-64)': {
-            'age_group': '55-64',
-            'csp': 'Actifs',
-            'default_solidaire': 5,
-            'default_normale': 90,
-            'default_soutien': 5
-        },
-        'Retraités (55-64)': {
-            'age_group': '55-64',
-            'csp': 'Retraites/Inactifs',
-            'default_solidaire': 10,
-            'default_normale': 90,
-            'default_soutien': 0
-        },
-        'Retraités (65+)': {
-            'age_group': '65+',
-            'csp': 'Retraites/Inactifs',
-            'default_solidaire': 10,
-            'default_normale': 90,
-            'default_soutien': 0
-        },
-        'Retraités (autres)': {
-            'age_group': None,
-            'csp': 'Retraites/Inactifs',
-            'default_solidaire': 10,
-            'default_normale': 90,
-            'default_soutien': 0
-        },
-        'Autres profils': {
-            'age_group': None,
-            'csp': None,
-            'default_solidaire': 10,
-            'default_normale': 90,
-            'default_soutien': 0
-        }
-    }
-    
-    # Stocker les proportions dans un dictionnaire
-    proportions_par_profil = {}
+    st.sidebar.markdown("##### Répartition des niveaux d'adhésion")
 
-    if mode_justificatif and not st.session_state.get("_justificatif_sliders_verrouilles"):
-        for nom_profil, config in profils_disponibles.items():
-            if profil_eligible_justificatif(config):
-                continue
-            normale = st.session_state.get(f"normale2_{nom_profil}", config['default_normale'])
-            soutien = st.session_state.get(f"soutien2_{nom_profil}", config['default_soutien'])
-            normale_new, soutien_new = repartir_parts_sans_solidaire(normale, soutien)
-            st.session_state[f"solidaire2_{nom_profil}"] = 0
-            st.session_state[f"normale2_{nom_profil}"] = normale_new
-            st.session_state[f"soutien2_{nom_profil}"] = soutien_new
-        st.session_state["_justificatif_sliders_verrouilles"] = True
-    elif not mode_justificatif and st.session_state.get("_justificatif_sliders_verrouilles"):
-        for nom_profil, config in profils_disponibles.items():
-            if profil_eligible_justificatif(config):
-                continue
-            st.session_state[f"solidaire2_{nom_profil}"] = config['default_solidaire']
-        st.session_state["_justificatif_sliders_verrouilles"] = False
-    
-    for nom_profil, config in profils_disponibles.items():
-        eligible = profil_eligible_justificatif(config)
-        solidaire_verrouille = mode_justificatif and not eligible
-        with st.sidebar.expander(f"📋 {nom_profil}", expanded=False):
-            if solidaire_verrouille:
-                st.caption("Tarif solidaire indisponible pour cette catégorie.")
-            solidaire = st.slider(
-                f"Solidaire (%)",
-                min_value=0,
-                max_value=100,
-                value=0 if solidaire_verrouille else config['default_solidaire'],
-                step=1,
-                key=f"solidaire2_{nom_profil}",
-                disabled=solidaire_verrouille,
+    recaler_historique = st.sidebar.checkbox(
+        "Recaler sur l'historique de l'année",
+        value=True,
+        help=(
+            "Mix observé cette année, appliqué à tous les profils : "
+            "solidaire 14 %, normal 28 %, soutien 58 %."
+        ),
+    )
+
+    proportions_globales = None
+    if recaler_historique:
+        st.sidebar.caption(
+            "Base connue : solidaire 14 % / normal 28 % / soutien 58 %. "
+            "Ce mix remplace la répartition par profil et la règle justificatif."
+        )
+        pct_solidaire_cible = st.sidebar.number_input(
+            "Solidaire (%)",
+            min_value=0,
+            max_value=100,
+            value=RATIOS_HISTORIQUE_PCT['solidaire'],
+            step=1,
+            key="ratio_global_solidaire",
+        )
+        pct_normale_cible = st.sidebar.number_input(
+            "Normal (%)",
+            min_value=0,
+            max_value=100,
+            value=RATIOS_HISTORIQUE_PCT['normale'],
+            step=1,
+            key="ratio_global_normale",
+        )
+        pct_soutien_cible = st.sidebar.number_input(
+            "Soutien (%)",
+            min_value=0,
+            max_value=100,
+            value=RATIOS_HISTORIQUE_PCT['soutien'],
+            step=1,
+            key="ratio_global_soutien",
+        )
+        total_ratios = (
+            pct_solidaire_cible + pct_normale_cible + pct_soutien_cible
+        )
+        if total_ratios != 100:
+            st.sidebar.warning(
+                f"Total = {total_ratios} % (ramenés à 100 %)."
             )
-            if solidaire_verrouille:
-                solidaire = 0
-            
-            normale = st.slider(
-                f"Normal (%)",
-                min_value=0,
-                max_value=100,
-                value=config['default_normale'],
-                step=1,
-                key=f"normale2_{nom_profil}"
-            )
-            
-            soutien = st.slider(
-                f"Soutien (%)",
-                min_value=0,
-                max_value=100,
-                value=config['default_soutien'],
-                step=1,
-                key=f"soutien2_{nom_profil}"
-            )
-            
-            total = solidaire + normale + soutien
-            if total != 100:
-                st.warning(f"⚠️ Total = {total}% (doit être 100%)")
-            
-            # Normaliser si nécessaire
-            if total > 0:
-                solidaire_norm = solidaire / total * 100
-                normale_norm = normale / total * 100
-                soutien_norm = soutien / total * 100
-            else:
-                solidaire_norm = 0
-                normale_norm = 0
-                soutien_norm = 0
-            
-            proportions_par_profil[nom_profil] = {
-                'age_group': config['age_group'],
-                'csp': config['csp'],
-                'solidaire': solidaire_norm / 100,
-                'normale': normale_norm / 100,
-                'soutien': soutien_norm / 100
+        proportions_globales = normaliser_ratios_pct(
+            pct_solidaire_cible,
+            pct_normale_cible,
+            pct_soutien_cible,
+        )
+        proportions_par_profil = {
+            'Tous profils (historique)': {
+                'age_group': None,
+                'csp': None,
+                'solidaire': proportions_globales['solidaire'],
+                'normale': proportions_globales['normale'],
+                'soutien': proportions_globales['soutien'],
             }
+        }
+    else:
+        st.sidebar.markdown(
+            "Ajustez les proportions de chaque tarif selon les profils. "
+            "Les valeurs doivent totaliser **100 %** pour chaque profil."
+        )
+    
+        # Définir les profils disponibles
+        profils_disponibles = {
+            'Jeunes (18-24)': {
+                'age_group': '18-24',
+                'csp': None,
+                'default_solidaire': 80,
+                'default_normale': 20,
+                'default_soutien': 0
+            },
+            'Étudiants/Chômeurs': {
+                'age_group': None,
+                'csp': 'Etudiants/Chomeurs',
+                'default_solidaire': 80,
+                'default_normale': 20,
+                'default_soutien': 0
+            },
+            'Actifs Jeunes (25-34)': {
+                'age_group': '25-34',
+                'csp': 'Actifs',
+                'default_solidaire': 10,
+                'default_normale': 88,
+                'default_soutien': 2
+            },
+            'Actifs Adultes (35-44)': {
+                'age_group': '35-44',
+                'csp': 'Actifs',
+                'default_solidaire': 10,
+                'default_normale': 85,
+                'default_soutien': 5
+            },
+            'Actifs Seniors (45-54)': {
+                'age_group': '45-54',
+                'csp': 'Actifs',
+                'default_solidaire': 5,
+                'default_normale': 90,
+                'default_soutien': 5
+            },
+            'Actifs Seniors (55-64)': {
+                'age_group': '55-64',
+                'csp': 'Actifs',
+                'default_solidaire': 5,
+                'default_normale': 90,
+                'default_soutien': 5
+            },
+            'Retraités (55-64)': {
+                'age_group': '55-64',
+                'csp': 'Retraites/Inactifs',
+                'default_solidaire': 10,
+                'default_normale': 90,
+                'default_soutien': 0
+            },
+            'Retraités (65+)': {
+                'age_group': '65+',
+                'csp': 'Retraites/Inactifs',
+                'default_solidaire': 10,
+                'default_normale': 90,
+                'default_soutien': 0
+            },
+            'Retraités (autres)': {
+                'age_group': None,
+                'csp': 'Retraites/Inactifs',
+                'default_solidaire': 10,
+                'default_normale': 90,
+                'default_soutien': 0
+            },
+            'Autres profils': {
+                'age_group': None,
+                'csp': None,
+                'default_solidaire': 10,
+                'default_normale': 90,
+                'default_soutien': 0
+            }
+        }
+    
+        # Stocker les proportions dans un dictionnaire
+        proportions_par_profil = {}
+
+        if mode_justificatif and not st.session_state.get("_justificatif_sliders_verrouilles"):
+            for nom_profil, config in profils_disponibles.items():
+                if profil_eligible_justificatif(config):
+                    continue
+                normale = st.session_state.get(f"normale2_{nom_profil}", config['default_normale'])
+                soutien = st.session_state.get(f"soutien2_{nom_profil}", config['default_soutien'])
+                normale_new, soutien_new = repartir_parts_sans_solidaire(normale, soutien)
+                st.session_state[f"solidaire2_{nom_profil}"] = 0
+                st.session_state[f"normale2_{nom_profil}"] = normale_new
+                st.session_state[f"soutien2_{nom_profil}"] = soutien_new
+            st.session_state["_justificatif_sliders_verrouilles"] = True
+        elif not mode_justificatif and st.session_state.get("_justificatif_sliders_verrouilles"):
+            for nom_profil, config in profils_disponibles.items():
+                if profil_eligible_justificatif(config):
+                    continue
+                st.session_state[f"solidaire2_{nom_profil}"] = config['default_solidaire']
+            st.session_state["_justificatif_sliders_verrouilles"] = False
+    
+        for nom_profil, config in profils_disponibles.items():
+            eligible = profil_eligible_justificatif(config)
+            solidaire_verrouille = mode_justificatif and not eligible
+            with st.sidebar.expander(f"📋 {nom_profil}", expanded=False):
+                if solidaire_verrouille:
+                    st.caption("Tarif solidaire indisponible pour cette catégorie.")
+                solidaire = st.slider(
+                    f"Solidaire (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=0 if solidaire_verrouille else config['default_solidaire'],
+                    step=1,
+                    key=f"solidaire2_{nom_profil}",
+                    disabled=solidaire_verrouille,
+                )
+                if solidaire_verrouille:
+                    solidaire = 0
+            
+                normale = st.slider(
+                    f"Normal (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=config['default_normale'],
+                    step=1,
+                    key=f"normale2_{nom_profil}"
+                )
+            
+                soutien = st.slider(
+                    f"Soutien (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=config['default_soutien'],
+                    step=1,
+                    key=f"soutien2_{nom_profil}"
+                )
+            
+                total = solidaire + normale + soutien
+                if total != 100:
+                    st.warning(f"⚠️ Total = {total}% (doit être 100%)")
+            
+                # Normaliser si nécessaire
+                if total > 0:
+                    solidaire_norm = solidaire / total * 100
+                    normale_norm = normale / total * 100
+                    soutien_norm = soutien / total * 100
+                else:
+                    solidaire_norm = 0
+                    normale_norm = 0
+                    soutien_norm = 0
+            
+                proportions_par_profil[nom_profil] = {
+                    'age_group': config['age_group'],
+                    'csp': config['csp'],
+                    'solidaire': solidaire_norm / 100,
+                    'normale': normale_norm / 100,
+                    'soutien': soutien_norm / 100
+                }
     
     st.sidebar.markdown("---")
     
@@ -1074,6 +1184,7 @@ def main():
             cotisation_soutien,
             proportions_par_profil,
             mode_justificatif=mode_justificatif,
+            proportions_globales=proportions_globales,
         )
         
         # Appliquer le nombre moyen de locations par adhérent (uniforme pour tous)
@@ -1352,6 +1463,7 @@ def main():
                             'pct_solidaire': pct_solidaire,
                             'pct_normale': pct_normale,
                             'pct_soutien': pct_soutien,
+                            'recalage_historique': recaler_historique,
                             'df_result': df_result,
                             'graphiques_paths': []
                         }
